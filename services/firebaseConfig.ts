@@ -17,6 +17,6 @@ const firebaseConfig = {
 };
 
 const app = firebase.initializeApp(firebaseConfig);
-const otherDb = getFirestore(app, 'controle-acionamento');
+const otherDb = getFirestore(app, 'ronda-digital');
 
 export { firebase, otherDb };
