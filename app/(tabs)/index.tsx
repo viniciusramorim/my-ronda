@@ -1,4 +1,4 @@
-import { View, StyleSheet, Button, Alert, TextInput, TouchableOpacity, Text } from 'react-native';
+import { View, StyleSheet, Alert, TextInput, TouchableOpacity, Text } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
@@ -43,6 +43,7 @@ export default function HomeScreen() {
 
     const novaRondaId = `ronda_${new Date().getTime()}`;
     const rondaRef = doc(otherDb, 'rondas', novaRondaId);
+    const userRef = doc(otherDb, 'usuarios', uid);
     await setDoc(rondaRef, {
       nomeRonda: `Ronda_${new Date().toLocaleString()}`,
       inicio: new Date().toISOString(),
@@ -56,7 +57,7 @@ export default function HomeScreen() {
     const sub = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
-        timeInterval: 15000,
+        timeInterval: 10000,
         distanceInterval: 0,
       },
       async (loc) => {
@@ -69,6 +70,21 @@ export default function HomeScreen() {
               timestamp: new Date().toISOString(),
             },
           });
+
+          await updateDoc(userRef, {
+            status_ronda: "Em Ronda",
+            ultimaLocalizacao: {
+              latitude: loc.coords.latitude,
+              longitude: loc.coords.longitude,
+              timestamp: new Date().toISOString(),
+            },
+          })
+
+          console.log({
+            latitude: loc.coords.latitude,
+            longitude: loc.coords.longitude,
+            timestamp: new Date().toISOString(),
+          })
         } catch (error) {
           console.error('Erro ao atualizar localização:', error);
         }
@@ -86,9 +102,15 @@ export default function HomeScreen() {
 
       if (rondaId) {
         const rondaRef = doc(otherDb, 'rondas', rondaId);
+        const userRef = doc(otherDb, 'usuarios', uid);
+
         await updateDoc(rondaRef, {
           fim: new Date().toISOString(),
         });
+
+        await updateDoc(userRef, {
+          status_ronda: "Parado"
+        })
       }
 
       setRondaId(null);
