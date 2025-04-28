@@ -1,6 +1,6 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
@@ -15,7 +15,7 @@ export default function RootLayout() {
   const [loaded] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
-
+  const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -28,14 +28,15 @@ export default function RootLayout() {
     const checkLogin = async () => {
       const logged = await AsyncStorage.getItem('loggedIn');
       setIsLoggedIn(logged === 'true');
-      console.log(isLoggedIn)
+      console.log("Logado: " + isLoggedIn)
+      if (!loaded || isLoggedIn === null) {
+        router.replace('/(auth)/login');
+        await AsyncStorage.removeItem('loggedIn');
+        return null; 
+      }
     };
     checkLogin();
   }, []);
-
-  if (!loaded || isLoggedIn === null) {
-    return null; // tela de loading aqui se quiser
-  }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>

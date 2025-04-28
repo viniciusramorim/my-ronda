@@ -1,5 +1,5 @@
 import { Tabs, useRouter } from 'expo-router';
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Platform, Pressable, Text } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -12,7 +12,7 @@ import { useColorScheme } from '@/hooks/useColorScheme';
 // Criando um contexto para compartilhar o estado da ronda
 const RondaContext = createContext({
   isTracking: false,
-  setIsTracking: (value: boolean) => {}
+  setIsTracking: (value: boolean) => { }
 });
 
 export const useRonda = () => useContext(RondaContext);

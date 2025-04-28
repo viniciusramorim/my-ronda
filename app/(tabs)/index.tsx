@@ -4,7 +4,7 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import { doc, setDoc, updateDoc, collection, addDoc, getDocs } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { otherDb, storage } from '@/services/firebaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
