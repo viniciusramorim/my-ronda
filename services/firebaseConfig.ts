@@ -4,6 +4,7 @@ import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: "AIzaSyCNLDlGGnF5aWOuqCs3DvvP0Z718VeAh5A",
@@ -16,7 +17,16 @@ const firebaseConfig = {
   measurementId: "G-C15XLCYDPP"
 };
 
+// Inicializa o app Firebase
 const app = firebase.initializeApp(firebaseConfig);
+
+// Firestore padrão (compatível)
+const db = firebase.firestore();
+
+// Firestore para a ronda digital (modular)
 const otherDb = getFirestore(app, 'ronda-digital');
 
-export { firebase, otherDb };
+// Storage (modular - recomendado para novas implementações)
+const storage = getStorage(app);
+
+export { firebase, db, otherDb, storage };
