@@ -1,4 +1,4 @@
-import { View, StyleSheet, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView } from 'react-native';
+import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView, ActivityIndicator } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -9,6 +9,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { otherDb, storage } from '@/services/firebaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRonda } from './_layout';
+import styles from '../../assets/styles/stylesIndex';
 
 interface Checkpoint {
   site: string;
@@ -33,30 +34,28 @@ export default function HomeScreen() {
   const [showKmModal, setShowKmModal] = useState<'inicio' | 'fim' | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [rondaDetails, setRondaDetails] = useState<any>(null);
+  const [uf, setUf] = useState<string>(''); // Adicionando a variável uf ao estado
 
   useEffect(() => {
     userData();
     (async () => {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua galeria para enviar fotos.');
+        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua câmera para tirar fotos.');
+      }
+    })();
+
+    // Solicitar permissão de localização em segundo plano
+    (async () => {
+      const { status } = await Location.requestBackgroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua localização em segundo plano.');
       }
     })();
   }, []);
 
-  const loadCheckpoints = async (rondaId: string) => {
-    try {
-      const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
-      const snapshot = await getDocs(checkpointsRef);
-      const loadedCheckpoints = snapshot.docs.map(doc => doc.data() as Checkpoint);
-      setCheckpoints(loadedCheckpoints);
-    } catch (error) {
-      console.error('Erro ao carregar checkpoints:', error);
-    }
-  };
-
-  const pickImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
+  const takeImage = async () => {
+    let result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [4, 3],
@@ -70,7 +69,7 @@ export default function HomeScreen() {
 
   const uploadImage = async () => {
     if (!image) return null;
-    
+
     setUploading(true);
     try {
       const response = await fetch(image);
@@ -118,7 +117,7 @@ export default function HomeScreen() {
     const novaRondaId = `ronda_${new Date().getTime()}`;
     const rondaRef = doc(otherDb, 'rondas', novaRondaId);
     const userRef = doc(otherDb, 'usuarios', uid);
-    
+
     const rondaData = {
       nomeRonda: `Ronda_${new Date().toLocaleString()}`,
       inicio: new Date().toISOString(),
@@ -127,9 +126,9 @@ export default function HomeScreen() {
       uid: uid,
       timestamp: new Date().toISOString(),
     };
-    
+
     await setDoc(rondaRef, rondaData);
-    
+
     setRondaId(novaRondaId);
     setRondaDetails(rondaData);
     setIsTracking(true);
@@ -180,6 +179,11 @@ export default function HomeScreen() {
       return;
     }
 
+    if (parseFloat(kmFinal) <= parseFloat(kmInicial)) {
+      Alert.alert('Erro', 'A quilometragem final não pode ser menor que a quilometragem inicial.');
+      return;
+    }
+
     if (subscription) {
       subscription.remove();
       setSubscription(null);
@@ -191,7 +195,7 @@ export default function HomeScreen() {
           const userRef = doc(otherDb, 'usuarios', uid);
 
           const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
-          
+
           await Promise.all([
             updateDoc(rondaRef, {
               fim: new Date().toISOString(),
@@ -224,13 +228,13 @@ export default function HomeScreen() {
         setKmFinal('');
         setShowKmModal(null);
         setCheckpoints([]);
-      }, 3000);
+      }, 1000);
     }
   };
 
   const handleCheckpoint = async () => {
-    if (!rondaId || !location || !siteCode.trim()) {
-      Alert.alert('Erro', 'Informe a sigla do site e certifique-se de que o GPS está ativo.');
+    if (!rondaId || !location || !siteCode.trim() || !uf.trim()) {
+      Alert.alert('Erro', 'Informe a sigla do site, a UF e certifique-se de que o GPS está ativo.');
       return;
     }
 
@@ -241,7 +245,7 @@ export default function HomeScreen() {
       }
 
       const checkpointData = {
-        site: siteCode.toUpperCase(),
+        site: `${siteCode.toUpperCase()}-${uf}`,
         motivo,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
@@ -257,6 +261,7 @@ export default function HomeScreen() {
 
       Alert.alert('Checkpoint adicionado', `Site ${siteCode.toUpperCase()} salvo com sucesso.`);
       setSiteCode('');
+      setUf('');
       setMotivo('Ronda em site');
       setImage(null);
     } catch (error) {
@@ -275,6 +280,7 @@ export default function HomeScreen() {
           isTracking ? styles.buttonStop : styles.buttonStart,
         ]}
         onPress={isTracking ? stopTracking : startTracking}
+        disabled={uploading}
       >
         <Text style={styles.buttonText}>
           {isTracking ? 'Parar Ronda' : 'Iniciar Ronda'}
@@ -292,7 +298,7 @@ export default function HomeScreen() {
             <Text style={styles.modalTitle}>
               {showKmModal === 'inicio' ? 'Quilometragem Inicial' : 'Quilometragem Final'}
             </Text>
-            
+
             <TextInput
               style={styles.modalInput}
               placeholder={`Digite o KM ${showKmModal === 'inicio' ? 'inicial' : 'final'}`}
@@ -300,19 +306,22 @@ export default function HomeScreen() {
               keyboardType="numeric"
               value={showKmModal === 'inicio' ? kmInicial : kmFinal}
               onChangeText={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
+              editable={!uploading}
             />
-            
+
             <View style={styles.modalButtonContainer}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonCancel]}
                 onPress={() => setShowKmModal(null)}
+                disabled={uploading}
               >
                 <Text style={styles.modalButtonText}>Cancelar</Text>
               </TouchableOpacity>
-              
+
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalButtonConfirm]}
                 onPress={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
+                disabled={uploading}
               >
                 <Text style={styles.modalButtonText}>Confirmar</Text>
               </TouchableOpacity>
@@ -325,14 +334,14 @@ export default function HomeScreen() {
       {isTracking && rondaDetails && (
         <View style={styles.detailsContainer}>
           <Text style={styles.detailsTitle}>Detalhes da Ronda</Text>
-          
+
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>Início:</Text>
             <Text style={styles.detailValue}>
               {new Date(rondaDetails.inicio).toLocaleString()}
             </Text>
           </View>
-          
+
           <View style={styles.detailRow}>
             <Text style={styles.detailLabel}>KM Inicial:</Text>
             <Text style={styles.detailValue}>{rondaDetails.kmInicial}</Text>
@@ -346,12 +355,12 @@ export default function HomeScreen() {
                   {new Date(rondaDetails.fim).toLocaleString()}
                 </Text>
               </View>
-              
+
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>KM Final:</Text>
                 <Text style={styles.detailValue}>{rondaDetails.kmFinal}</Text>
               </View>
-              
+
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Distância Percorrida:</Text>
                 <Text style={styles.detailValue}>
@@ -381,13 +390,55 @@ export default function HomeScreen() {
       {/* Formulário de Checkpoint - Mostra apenas quando a ronda está ativa */}
       {isTracking && (
         <>
-          <TextInput
-            style={styles.input}
-            placeholder="Sigla do site (ex: SP001)"
-            placeholderTextColor="#999"
-            value={siteCode}
-            onChangeText={setSiteCode}
-          />
+          {motivo === 'ronda_em_site' && (
+            <View style={styles.siteInputContainer}>
+              <TextInput
+                style={styles.input}
+                placeholder="Sigla (ex: SP1)"
+                placeholderTextColor="#999"
+                value={siteCode}
+                onChangeText={(text) => setSiteCode(text)}
+                editable={!uploading}
+              />
+              <View style={styles.pickerContainerUF}>
+                <Picker
+                  selectedValue={uf}
+                  onValueChange={(itemValue) => setUf(itemValue)}
+                  style={styles.ufPicker}
+                  enabled={!uploading}
+                >
+                  <Picker.Item label="UF" value="" color="#999" />
+                  <Picker.Item label="AC" value="AC" />
+                  <Picker.Item label="AL" value="AL" />
+                  <Picker.Item label="AP" value="AP" />
+                  <Picker.Item label="AM" value="AM" />
+                  <Picker.Item label="BA" value="BA" />
+                  <Picker.Item label="CE" value="CE" />
+                  <Picker.Item label="DF" value="DF" />
+                  <Picker.Item label="ES" value="ES" />
+                  <Picker.Item label="GO" value="GO" />
+                  <Picker.Item label="MA" value="MA" />
+                  <Picker.Item label="MT" value="MT" />
+                  <Picker.Item label="MS" value="MS" />
+                  <Picker.Item label="MG" value="MG" />
+                  <Picker.Item label="PA" value="PA" />
+                  <Picker.Item label="PB" value="PB" />
+                  <Picker.Item label="PR" value="PR" />
+                  <Picker.Item label="PE" value="PE" />
+                  <Picker.Item label="PI" value="PI" />
+                  <Picker.Item label="RJ" value="RJ" />
+                  <Picker.Item label="RN" value="RN" />
+                  <Picker.Item label="RS" value="RS" />
+                  <Picker.Item label="RO" value="RO" />
+                  <Picker.Item label="RR" value="RR" />
+                  <Picker.Item label="SC" value="SC" />
+                  <Picker.Item label="SP" value="SP" />
+                  <Picker.Item label="SE" value="SE" />
+                  <Picker.Item label="TO" value="TO" />
+                </Picker>
+              </View>
+            </View>
+          )}
 
           <View style={styles.pickerContainer}>
             <Picker
@@ -398,6 +449,7 @@ export default function HomeScreen() {
               }}
               dropdownIconColor="#fff"
               style={styles.picker}
+              enabled={!uploading}
             >
               <Picker.Item label="Selecione o motivo" value="" color="#999" />
               <Picker.Item label="Ronda em site" value="ronda_em_site" color="#000" />
@@ -409,21 +461,25 @@ export default function HomeScreen() {
 
           {motivo === 'ronda_em_site' && (
             <>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.imageButton}
-                onPress={pickImage}
+                onPress={takeImage}
                 disabled={uploading}
               >
                 <Text style={styles.buttonText}>
                   {image ? 'Alterar Imagem' : 'Adicionar Imagem'}
                 </Text>
               </TouchableOpacity>
-              
+
               {image && (
-                <Image 
-                  source={{ uri: image }} 
-                  style={styles.imagePreview} 
+                <Image
+                  source={{ uri: image }}
+                  style={styles.imagePreview}
                 />
+              )}
+
+              {uploading && (
+                <ActivityIndicator size="large" color="#0000ff" />
               )}
             </>
           )}
@@ -434,7 +490,7 @@ export default function HomeScreen() {
               !siteCode ? styles.buttonDisabled : styles.buttonCheckpoint
             ]}
             onPress={handleCheckpoint}
-            disabled={!siteCode}
+            disabled={!siteCode || uploading}
           >
             <Text style={styles.buttonText}>Registrar Checkpoint</Text>
           </TouchableOpacity>
@@ -443,215 +499,3 @@ export default function HomeScreen() {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    padding: 24,
-    justifyContent: 'center',
-    gap: 16,
-    alignItems: 'center',
-    backgroundColor: '#2a003f',
-  },
-  welcomeText: {
-    fontSize: 18,
-    color: '#ffffff',
-    marginBottom: 16,
-  },
-  detailsContainer: {
-    width: '100%',
-    backgroundColor: '#3a005c',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#bb86fc',
-  },
-  detailsTitle: {
-    fontSize: 16,
-    color: '#ffffff',
-    fontWeight: 'bold',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  detailLabel: {
-    fontSize: 14,
-    color: '#bb86fc',
-    fontWeight: 'bold',
-  },
-  detailValue: {
-    fontSize: 14,
-    color: '#ffffff',
-  },
-  checkpointsContainer: {
-    marginTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#bb86fc',
-    paddingTop: 12,
-  },
-  checkpointsTitle: {
-    fontSize: 14,
-    color: '#bb86fc',
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  checkpointItem: {
-    backgroundColor: '#4a006c',
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: 8,
-  },
-  checkpointSite: {
-    fontSize: 14,
-    color: '#ffffff',
-    fontWeight: 'bold',
-  },
-  checkpointMotivo: {
-    fontSize: 12,
-    color: '#bbbbbb',
-  },
-  checkpointTime: {
-    fontSize: 12,
-    color: '#bb86fc',
-    textAlign: 'right',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#bb86fc',
-    borderRadius: 8,
-    padding: 10,
-    width: '100%',
-    maxWidth: 300,
-    backgroundColor: '#3a005c',
-    color: '#ffffff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  pickerContainer: {
-    width: '100%',
-    maxWidth: 300,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#3a005c',
-    borderColor: '#bb86fc',
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  picker: {
-    color: '#fff',
-    backgroundColor: '#3a005c',
-    height: 50,
-  },
-  button: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 4,
-    width: '100%',
-    maxWidth: 300,
-  },
-  buttonStart: {
-    backgroundColor: '#03dac5',
-  },
-  buttonStop: {
-    backgroundColor: '#cf6679',
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  buttonCheckpoint: {
-    backgroundColor: '#6200ee',
-  },
-  buttonDisabled: {
-    backgroundColor: '#555',
-  },
-  imageButton: {
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3700B3',
-    marginVertical: 10,
-    width: '100%',
-    maxWidth: 300,
-  },
-  imagePreview: {
-    width: 200,
-    height: 200,
-    borderRadius: 8,
-    marginVertical: 10,
-    borderWidth: 1,
-    borderColor: '#bb86fc',
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    width: '80%',
-    backgroundColor: '#2a003f',
-    borderRadius: 10,
-    padding: 20,
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: 18,
-    color: '#ffffff',
-    marginBottom: 20,
-    fontWeight: 'bold',
-  },
-  modalInput: {
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#bb86fc',
-    borderRadius: 8,
-    padding: 10,
-    backgroundColor: '#3a005c',
-    color: '#ffffff',
-    marginBottom: 20,
-  },
-  modalButtonContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-  },
-  modalButton: {
-    padding: 10,
-    borderRadius: 8,
-    width: '48%',
-    alignItems: 'center',
-  },
-  modalButtonCancel: {
-    backgroundColor: '#cf6679',
-  },
-  modalButtonConfirm: {
-    backgroundColor: '#03dac5',
-  },
-  modalButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-  },
-});
