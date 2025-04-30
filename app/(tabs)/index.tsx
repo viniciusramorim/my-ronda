@@ -2,6 +2,7 @@ import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollVie
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
+import * as TaskManager from 'expo-task-manager';
 import { useEffect, useState } from 'react';
 import { doc, setDoc, updateDoc, collection, addDoc, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -11,12 +12,50 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRonda } from './_layout';
 import styles from '../../assets/styles/stylesIndex';
 
+const LOCATION_TASK_NAME = 'background-location-task';
+
 interface Checkpoint {
   site: string;
   motivo: string;
   timestamp: string;
   imageUrl?: string;
 }
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+  if (error) {
+    console.error('Erro na tarefa de localização em segundo plano:', error);
+    return;
+  }
+  if (data) {
+    const { locations } = data as any;
+    const location = locations[0];
+    if (location) {
+      console.log('Localização em segundo plano:', location);
+      // Atualize a localização no Firestore
+      const rondaId = await AsyncStorage.getItem('rondaId');
+      const uid = await AsyncStorage.getItem('userUid');
+      if (rondaId && uid) {
+        const rondaRef = doc(otherDb, 'rondas', rondaId);
+        const userRef = doc(otherDb, 'usuarios', uid);
+        await updateDoc(rondaRef, {
+          ultimaLocalizacao: {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            timestamp: new Date().toISOString(),
+          },
+        });
+        await updateDoc(userRef, {
+          status_ronda: "Em Ronda",
+          ultimaLocalizacao: {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+    }
+  }
+});
 
 export default function HomeScreen() {
   const { isTracking, setIsTracking } = useRonda();
@@ -135,6 +174,8 @@ export default function HomeScreen() {
     setShowKmModal(null);
     setCheckpoints([]);
 
+    await AsyncStorage.setItem('rondaId', novaRondaId);
+
     const sub = await Location.watchPositionAsync(
       {
         accuracy: Location.Accuracy.High,
@@ -167,6 +208,17 @@ export default function HomeScreen() {
     );
 
     setSubscription(sub);
+
+    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 10000,
+      distanceInterval: 0,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: 'Rastreamento de Localização',
+        notificationBody: 'Seu aplicativo está rastreando sua localização.',
+      },
+    });
   };
 
   const stopTracking = async () => {
@@ -230,6 +282,8 @@ export default function HomeScreen() {
         setCheckpoints([]);
       }, 1000);
     }
+
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
   };
 
   const handleCheckpoint = async () => {
