@@ -28,7 +28,8 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE"
-      ]
+      ],
+      "package": "com.victor.blasques.myronda"
     },
     "web": {
       "bundler": "metro",
