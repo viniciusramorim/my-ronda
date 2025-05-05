@@ -19,17 +19,22 @@
       }
     },
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
       "permissions": [
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE"
+        "FOREGROUND_SERVICE",
+        "WAKE_LOCK"
       ],
-      "package": "com.victor.blasques.myronda"
+      "googleServicesFile": "./google-services.json",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "com.suaempresa.rondas",
+      "foregroundService": {
+        "notificationTitle": "Rastreamento em andamento",
+        "notificationBody": "O aplicativo está rastreando sua localização em segundo plano",
+        "notificationColor": "#0033FF"
+      }
     },
     "web": {
       "bundler": "metro",
@@ -37,6 +42,8 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "expo-location",
+      "expo-background-fetch",
       "expo-router",
       [
         "expo-splash-screen",

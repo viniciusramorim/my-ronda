@@ -1,10 +1,11 @@
-import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as TaskManager from 'expo-task-manager';
+import * as BackgroundFetch from 'expo-background-fetch';
 import { useEffect, useState } from 'react';
-import { doc, setDoc, updateDoc, collection, addDoc, getDocs } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { otherDb, storage } from '@/services/firebaseConfig';
@@ -13,6 +14,7 @@ import { useRonda } from './_layout';
 import styles from '../../assets/styles/stylesIndex';
 
 const LOCATION_TASK_NAME = 'background-location-task';
+const BACKGROUND_FETCH_TASK = 'background-fetch-task';
 
 interface Checkpoint {
   site: string;
@@ -31,7 +33,6 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const location = locations[0];
     if (location) {
       console.log('Localização em segundo plano:', location);
-      // Atualize a localização no Firestore
       const rondaId = await AsyncStorage.getItem('rondaId');
       const uid = await AsyncStorage.getItem('userUid');
       if (rondaId && uid) {
@@ -57,6 +58,78 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   }
 });
 
+TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
+  const now = Date.now();
+  console.log(`Background fetch executado em: ${new Date(now).toISOString()}`);
+  return BackgroundFetch.Result.NewData;
+});
+
+async function registerBackgroundFetch() {
+  try {
+    await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
+      minimumInterval: 15 * 60,
+      stopOnTerminate: false,
+      startOnBoot: true,
+    });
+    console.log('Background fetch registrado!');
+  } catch (err) {
+    console.log('Erro ao registrar background fetch:', err);
+  }
+}
+
+// Função para verificar e solicitar permissões
+async function checkAndRequestPermissions() {
+  // Verifica permissões de câmera
+  const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
+  if (cameraStatus.status !== 'granted') {
+    Alert.alert('Permissão necessária', 'Precisamos de acesso à sua câmera para tirar fotos.');
+  }
+
+  // Verifica permissões de localização
+  const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+  if (foregroundStatus !== 'granted') {
+    Alert.alert('Permissão necessária', 'Precisamos de acesso à sua localização.');
+    return false;
+  }
+
+  // Verifica permissões de background no Android
+  if (Platform.OS === 'android') {
+    const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+    if (backgroundStatus !== 'granted') {
+      Alert.alert(
+        'Permissão necessária',
+        'Para rastreamento contínuo, precisamos de acesso à sua localização em segundo plano.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Abrir Configurações', onPress: () => Location.openSettings() }
+        ]
+      );
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// Função para verificar otimizações de bateria no Android
+async function checkBatteryOptimizations() {
+  if (Platform.OS === 'android') {
+    const batteryOptimizationEnabled = await Location.hasServicesEnabledAsync();
+    if (!batteryOptimizationEnabled) {
+      Alert.alert(
+        "Modo de Economia Ativo",
+        "Para o rastreamento funcionar corretamente, desative as otimizações de bateria para este app nas configurações do dispositivo.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Abrir Configurações", onPress: () => Location.openSettings() }
+        ]
+      );
+      return false;
+    }
+  }
+  return true;
+}
+
 export default function HomeScreen() {
   const { isTracking, setIsTracking } = useRonda();
   const [location, setLocation] = useState<any>(null);
@@ -73,22 +146,16 @@ export default function HomeScreen() {
   const [showKmModal, setShowKmModal] = useState<'inicio' | 'fim' | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [rondaDetails, setRondaDetails] = useState<any>(null);
-  const [uf, setUf] = useState<string>(''); // Adicionando a variável uf ao estado
+  const [uf, setUf] = useState<string>('');
 
   useEffect(() => {
+    registerBackgroundFetch();
     userData();
+    checkAndRequestPermissions();
     (async () => {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
         Alert.alert('Permissão necessária', 'Precisamos de acesso à sua câmera para tirar fotos.');
-      }
-    })();
-
-    // Solicitar permissão de localização em segundo plano
-    (async () => {
-      const { status } = await Location.requestBackgroundPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua localização em segundo plano.');
       }
     })();
   }, []);
@@ -133,6 +200,14 @@ export default function HomeScreen() {
   };
 
   const startTracking = async () => {
+    // Verifica permissões antes de iniciar
+    const permissionsGranted = await checkAndRequestPermissions();
+    if (!permissionsGranted) return;
+
+    // Verifica otimizações de bateria no Android
+    const batteryOk = await checkBatteryOptimizations();
+    if (!batteryOk) return;
+
     setShowKmModal('inicio');
   };
 
@@ -142,83 +217,84 @@ export default function HomeScreen() {
       return;
     }
 
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permissão negada', 'É necessário acesso à localização.');
-      return;
-    }
-
     if (!uid) {
       Alert.alert('Erro', 'UID do usuário não encontrado.');
       return;
     }
 
-    const novaRondaId = `ronda_${new Date().getTime()}`;
-    const rondaRef = doc(otherDb, 'rondas', novaRondaId);
-    const userRef = doc(otherDb, 'usuarios', uid);
+    try {
+      const novaRondaId = `ronda_${new Date().getTime()}`;
+      const rondaRef = doc(otherDb, 'rondas', novaRondaId);
+      const userRef = doc(otherDb, 'usuarios', uid);
 
-    const rondaData = {
-      nomeRonda: `Ronda_${new Date().toLocaleString()}`,
-      inicio: new Date().toISOString(),
-      kmInicial: parseFloat(kmInicial),
-      ultimaLocalizacao: null,
-      uid: uid,
-      timestamp: new Date().toISOString(),
-    };
+      const rondaData = {
+        nomeRonda: `Ronda_${new Date().toLocaleString()}`,
+        inicio: new Date().toISOString(),
+        kmInicial: parseFloat(kmInicial),
+        ultimaLocalizacao: null,
+        uid: uid,
+        timestamp: new Date().toISOString(),
+      };
 
-    await setDoc(rondaRef, rondaData);
+      await setDoc(rondaRef, rondaData);
 
-    setRondaId(novaRondaId);
-    setRondaDetails(rondaData);
-    setIsTracking(true);
-    setShowKmModal(null);
-    setCheckpoints([]);
+      setRondaId(novaRondaId);
+      setRondaDetails(rondaData);
+      setIsTracking(true);
+      setShowKmModal(null);
+      setCheckpoints([]);
 
-    await AsyncStorage.setItem('rondaId', novaRondaId);
+      await AsyncStorage.setItem('rondaId', novaRondaId);
 
-    const sub = await Location.watchPositionAsync(
-      {
+      const sub = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 10000,
+          distanceInterval: 0,
+        },
+        async (loc) => {
+          setLocation(loc);
+          try {
+            await updateDoc(rondaRef, {
+              ultimaLocalizacao: {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                timestamp: new Date().toISOString(),
+              },
+            });
+
+            await updateDoc(userRef, {
+              status_ronda: "Em Ronda",
+              ultimaLocalizacao: {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          } catch (error) {
+            console.error('Erro ao atualizar localização:', error);
+          }
+        }
+      );
+
+      setSubscription(sub);
+
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.High,
         timeInterval: 10000,
         distanceInterval: 0,
-      },
-      async (loc) => {
-        setLocation(loc);
-        try {
-          await updateDoc(rondaRef, {
-            ultimaLocalizacao: {
-              latitude: loc.coords.latitude,
-              longitude: loc.coords.longitude,
-              timestamp: new Date().toISOString(),
-            },
-          });
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+          notificationTitle: 'Rastreamento de Localização',
+          notificationBody: 'Seu aplicativo está rastreando sua localização.',
+          notificationColor: '#0000ff',
+        },
+      });
 
-          await updateDoc(userRef, {
-            status_ronda: "Em Ronda",
-            ultimaLocalizacao: {
-              latitude: loc.coords.latitude,
-              longitude: loc.coords.longitude,
-              timestamp: new Date().toISOString(),
-            },
-          });
-        } catch (error) {
-          console.error('Erro ao atualizar localização:', error);
-        }
-      }
-    );
-
-    setSubscription(sub);
-
-    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-      accuracy: Location.Accuracy.High,
-      timeInterval: 10000,
-      distanceInterval: 0,
-      showsBackgroundLocationIndicator: true,
-      foregroundService: {
-        notificationTitle: 'Rastreamento de Localização',
-        notificationBody: 'Seu aplicativo está rastreando sua localização.',
-      },
-    });
+    } catch (error) {
+      console.error('Erro ao iniciar rastreamento:', error);
+      Alert.alert('Erro', 'Não foi possível iniciar o rastreamento.');
+    }
   };
 
   const stopTracking = async () => {
@@ -259,7 +335,6 @@ export default function HomeScreen() {
             })
           ]);
 
-          // Atualiza os detalhes locais
           setRondaDetails(prev => ({
             ...prev,
             fim: new Date().toISOString(),
@@ -272,7 +347,6 @@ export default function HomeScreen() {
         }
       }
 
-      // Limpa os estados após um pequeno delay para mostrar os dados finais
       setTimeout(() => {
         setRondaId(null);
         setRondaDetails(null);
@@ -287,8 +361,11 @@ export default function HomeScreen() {
   };
 
   const handleCheckpoint = async () => {
-    if (!rondaId || !location || !siteCode.trim() || !uf.trim()) {
+    if (motivo === 'ronda_em_site' && (!rondaId || !location || !siteCode.trim() || !uf.trim())) {
       Alert.alert('Erro', 'Informe a sigla do site, a UF e certifique-se de que o GPS está ativo.');
+      return;
+    } else if (!rondaId || !location){
+      Alert.alert('Erro', 'Certifique-se de que o GPS está ativo.');
       return;
     }
 
@@ -310,7 +387,6 @@ export default function HomeScreen() {
       const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
       await addDoc(checkpointsRef, checkpointData);
 
-      // Atualiza a lista local de checkpoints
       setCheckpoints(prev => [...prev, checkpointData]);
 
       Alert.alert('Checkpoint adicionado', `Site ${siteCode.toUpperCase()} salvo com sucesso.`);
@@ -341,7 +417,6 @@ export default function HomeScreen() {
         </Text>
       </TouchableOpacity>
 
-      {/* Modal para KM Inicial/Final */}
       <Modal
         visible={showKmModal !== null}
         transparent={true}
@@ -384,7 +459,6 @@ export default function HomeScreen() {
         </View>
       </Modal>
 
-      {/* Detalhes da Ronda - Mostra apenas quando a ronda está ativa */}
       {isTracking && rondaDetails && (
         <View style={styles.detailsContainer}>
           <Text style={styles.detailsTitle}>Detalhes da Ronda</Text>
@@ -441,7 +515,6 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {/* Formulário de Checkpoint - Mostra apenas quando a ronda está ativa */}
       {isTracking && (
         <>
           {motivo === 'ronda_em_site' && (
@@ -541,10 +614,10 @@ export default function HomeScreen() {
           <TouchableOpacity
             style={[
               styles.button,
-              !siteCode ? styles.buttonDisabled : styles.buttonCheckpoint
+              styles.buttonCheckpoint
             ]}
             onPress={handleCheckpoint}
-            disabled={!siteCode || uploading}
+            disabled={uploading}
           >
             <Text style={styles.buttonText}>Registrar Checkpoint</Text>
           </TouchableOpacity>
