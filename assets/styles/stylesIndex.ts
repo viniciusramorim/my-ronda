@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
         backgroundColor: '#03dac5',
     },
     buttonStop: {
-        backgroundColor: '#cf6679',
+        backgroundColor: '#e32636',
     },
     buttonText: {
         color: '#fff',
@@ -202,7 +202,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     modalButtonCancel: {
-        backgroundColor: '#cf6679',
+        backgroundColor: '#e32636',
     },
     modalButtonConfirm: {
         backgroundColor: '#03dac5',
@@ -237,6 +237,32 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#bb86fc',
         borderRadius: 8,
+    },
+    buttonPanic: {
+        backgroundColor: 'red',
+        padding: 15,
+        borderRadius: 10,
+        alignItems: 'center',
+        marginTop: 10,
+    },
+    panicButton: {
+        position: 'absolute',
+        bottom: 20,
+        right: 20,
+        backgroundColor: '#fff8f824',
+        borderColor: '#FFF',
+        borderWidth: 2,
+        borderRadius: 50,
+        borderStyle: 'dashed',
+        width: 60,
+        height: 60,
+        justifyContent: 'center',
+        alignItems: 'center',
+        elevation: 5, // Para adicionar sombra no Android
+        shadowColor: '#000', // Para adicionar sombra no iOS
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.8,
+        shadowRadius: 2,
     },
 });
 

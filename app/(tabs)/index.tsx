@@ -7,6 +7,7 @@ import * as BackgroundFetch from 'expo-background-fetch';
 import { useEffect, useState } from 'react';
 import { doc, setDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { MaterialCommunityIcons } from '@expo/vector-icons'; // Importando o pacote de ícones
 
 import { otherDb, storage } from '@/services/firebaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -147,6 +148,8 @@ export default function HomeScreen() {
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [rondaDetails, setRondaDetails] = useState<any>(null);
   const [uf, setUf] = useState<string>('');
+  const [showPanicModal, setShowPanicModal] = useState(false);
+  const [showCheckpointModal, setShowCheckpointModal] = useState(false);
 
   useEffect(() => {
     registerBackgroundFetch();
@@ -361,14 +364,19 @@ export default function HomeScreen() {
   };
 
   const handleCheckpoint = async () => {
-    if (motivo === 'ronda_em_site' && (!rondaId || !location || !siteCode.trim() || !uf.trim())) {
-      Alert.alert('Erro', 'Informe a sigla do site, a UF e certifique-se de que o GPS está ativo.');
-      return;
-    } else if (!rondaId || !location){
+    if (!rondaId || !location) {
       Alert.alert('Erro', 'Certifique-se de que o GPS está ativo.');
       return;
     }
 
+    if (motivo === 'ronda_em_site') {
+      setShowCheckpointModal(true);
+    } else {
+      confirmCheckpoint();
+    }
+  };
+
+  const confirmCheckpoint = async () => {
     try {
       let imageUrl = null;
       if (motivo === 'ronda_em_site' && image) {
@@ -392,141 +400,134 @@ export default function HomeScreen() {
       Alert.alert('Checkpoint adicionado', `Site ${siteCode.toUpperCase()} salvo com sucesso.`);
       setSiteCode('');
       setUf('');
-      setMotivo('Ronda em site');
+      setMotivo('');
       setImage(null);
+      setShowCheckpointModal(false);
     } catch (error) {
       console.error('Erro ao adicionar checkpoint:', error);
       Alert.alert('Erro', 'Não foi possível salvar o checkpoint.');
     }
   };
 
+  const handlePanicButton = () => {
+    setShowPanicModal(true);
+  };
+
+  const confirmPanicCheckpoint = async () => {
+    if (!rondaId || !location || !siteCode.trim() || !uf.trim()) {
+      Alert.alert('Erro', 'Informe a sigla do site, a UF e certifique-se de que o GPS está ativo.');
+      return;
+    }
+
+    try {
+      let imageUrl = null;
+      if (image) {
+        imageUrl = await uploadImage();
+      }
+
+      const checkpointData = {
+        site: `${siteCode.toUpperCase()}-${uf}`,
+        motivo: 'reporte_de_incidencia',
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        timestamp: new Date().toISOString(),
+        ...(imageUrl && { imageUrl }),
+      };
+
+      const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
+      await addDoc(checkpointsRef, checkpointData);
+
+      setCheckpoints(prev => [...prev, checkpointData]);
+
+      Alert.alert('Reporte de Incidencia registrado', 'Checkpoint de Reporte de Incidencia salvo com sucesso.');
+      setShowPanicModal(false);
+      setSiteCode('');
+      setUf('');
+      setImage(null);
+    } catch (error) {
+      console.error('Erro ao adicionar checkpoint de Reporte de Incidencia:', error);
+      Alert.alert('Erro', 'Não foi possível salvar o checkpoint de Reporte de Incidencia.');
+    }
+  };
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.welcomeText}>Bem-vindo(a) {user}.</Text>
+    <View style={{ flex: 1 }}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.welcomeText}>Bem-vindo(a) {user}.</Text>
 
-      <TouchableOpacity
-        style={[
-          styles.button,
-          isTracking ? styles.buttonStop : styles.buttonStart,
-        ]}
-        onPress={isTracking ? stopTracking : startTracking}
-        disabled={uploading}
-      >
-        <Text style={styles.buttonText}>
-          {isTracking ? 'Parar Ronda' : 'Iniciar Ronda'}
-        </Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.button,
+            isTracking ? styles.buttonStop : styles.buttonStart,
+          ]}
+          onPress={isTracking ? stopTracking : startTracking}
+          disabled={uploading}
+        >
+          <Text style={styles.buttonText}>
+            {isTracking ? 'Parar Ronda' : 'Iniciar Ronda'}
+          </Text>
+        </TouchableOpacity>
 
-      <Modal
-        visible={showKmModal !== null}
-        transparent={true}
-        animationType="slide"
-      >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              {showKmModal === 'inicio' ? 'Quilometragem Inicial' : 'Quilometragem Final'}
-            </Text>
+        <Modal
+          visible={showKmModal !== null}
+          transparent={true}
+          animationType="slide"
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>
+                {showKmModal === 'inicio' ? 'Quilometragem Inicial' : 'Quilometragem Final'}
+              </Text>
 
-            <TextInput
-              style={styles.modalInput}
-              placeholder={`Digite o KM ${showKmModal === 'inicio' ? 'inicial' : 'final'}`}
-              placeholderTextColor="#999"
-              keyboardType="numeric"
-              value={showKmModal === 'inicio' ? kmInicial : kmFinal}
-              onChangeText={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
-              editable={!uploading}
-            />
-
-            <View style={styles.modalButtonContainer}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => setShowKmModal(null)}
-                disabled={uploading}
-              >
-                <Text style={styles.modalButtonText}>Cancelar</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonConfirm]}
-                onPress={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
-                disabled={uploading}
-              >
-                <Text style={styles.modalButtonText}>Confirmar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {isTracking && rondaDetails && (
-        <View style={styles.detailsContainer}>
-          <Text style={styles.detailsTitle}>Detalhes da Ronda</Text>
-
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Início:</Text>
-            <Text style={styles.detailValue}>
-              {new Date(rondaDetails.inicio).toLocaleString()}
-            </Text>
-          </View>
-
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>KM Inicial:</Text>
-            <Text style={styles.detailValue}>{rondaDetails.kmInicial}</Text>
-          </View>
-
-          {rondaDetails.fim && (
-            <>
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Fim:</Text>
-                <Text style={styles.detailValue}>
-                  {new Date(rondaDetails.fim).toLocaleString()}
-                </Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>KM Final:</Text>
-                <Text style={styles.detailValue}>{rondaDetails.kmFinal}</Text>
-              </View>
-
-              <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Distância Percorrida:</Text>
-                <Text style={styles.detailValue}>
-                  {rondaDetails.distanciaPercorrida} km
-                </Text>
-              </View>
-            </>
-          )}
-
-          {checkpoints.length > 0 && (
-            <View style={styles.checkpointsContainer}>
-              <Text style={styles.checkpointsTitle}>Checkpoints ({checkpoints.length})</Text>
-              {checkpoints.map((cp, index) => (
-                <View key={index} style={styles.checkpointItem}>
-                  <Text style={styles.checkpointSite}>{cp.site}</Text>
-                  <Text style={styles.checkpointMotivo}>{cp.motivo}</Text>
-                  <Text style={styles.checkpointTime}>
-                    {new Date(cp.timestamp).toLocaleTimeString()}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-      )}
-
-      {isTracking && (
-        <>
-          {motivo === 'ronda_em_site' && (
-            <View style={styles.siteInputContainer}>
               <TextInput
-                style={styles.input}
+                style={styles.modalInput}
+                placeholder={`Digite o KM ${showKmModal === 'inicio' ? 'inicial' : 'final'}`}
+                placeholderTextColor="#999"
+                keyboardType="numeric"
+                value={showKmModal === 'inicio' ? kmInicial : kmFinal}
+                onChangeText={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
+                editable={!uploading}
+              />
+
+              <View style={styles.modalButtonContainer}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonCancel]}
+                  onPress={() => setShowKmModal(null)}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonConfirm]}
+                  onPress={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={showPanicModal}
+          transparent={true}
+          animationType="slide"
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Registrar Incidencia</Text>
+
+              <TextInput
+                style={styles.modalInput}
                 placeholder="Sigla (ex: SP1)"
                 placeholderTextColor="#999"
                 value={siteCode}
                 onChangeText={(text) => setSiteCode(text)}
                 editable={!uploading}
               />
+
               <View style={styles.pickerContainerUF}>
                 <Picker
                   selectedValue={uf}
@@ -564,30 +565,7 @@ export default function HomeScreen() {
                   <Picker.Item label="TO" value="TO" />
                 </Picker>
               </View>
-            </View>
-          )}
 
-          <View style={styles.pickerContainer}>
-            <Picker
-              selectedValue={motivo}
-              onValueChange={(itemValue) => {
-                setMotivo(itemValue);
-                if (itemValue !== 'ronda_em_site') setImage(null);
-              }}
-              dropdownIconColor="#fff"
-              style={styles.picker}
-              enabled={!uploading}
-            >
-              <Picker.Item label="Selecione o motivo" value="" color="#999" />
-              <Picker.Item label="Ronda em site" value="ronda_em_site" color="#000" />
-              <Picker.Item label="Abastecimento" value="abastecimento" color="#000" />
-              <Picker.Item label="Troca de veículo" value="troca_de_veiculo" color="#000" />
-              <Picker.Item label="Outros" value="outros" color="#000" />
-            </Picker>
-          </View>
-
-          {motivo === 'ronda_em_site' && (
-            <>
               <TouchableOpacity
                 style={styles.imageButton}
                 onPress={takeImage}
@@ -608,21 +586,226 @@ export default function HomeScreen() {
               {uploading && (
                 <ActivityIndicator size="large" color="#0000ff" />
               )}
-            </>
-          )}
 
-          <TouchableOpacity
-            style={[
-              styles.button,
-              styles.buttonCheckpoint
-            ]}
-            onPress={handleCheckpoint}
-            disabled={uploading}
-          >
-            <Text style={styles.buttonText}>Registrar Checkpoint</Text>
-          </TouchableOpacity>
-        </>
+              <View style={styles.modalButtonContainer}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonCancel]}
+                  onPress={() => setShowPanicModal(false)}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonConfirm]}
+                  onPress={confirmPanicCheckpoint}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        <Modal
+          visible={showCheckpointModal}
+          transparent={true}
+          animationType="slide"
+        >
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Registrar Checkpoint</Text>
+
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Sigla (ex: SP1)"
+                placeholderTextColor="#999"
+                value={siteCode}
+                onChangeText={(text) => setSiteCode(text)}
+                editable={!uploading}
+              />
+
+              <View style={styles.pickerContainerUF}>
+                <Picker
+                  selectedValue={uf}
+                  onValueChange={(itemValue) => setUf(itemValue)}
+                  style={styles.ufPicker}
+                  enabled={!uploading}
+                >
+                  <Picker.Item label="UF" value="" color="#999" />
+                  <Picker.Item label="AC" value="AC" />
+                  <Picker.Item label="AL" value="AL" />
+                  <Picker.Item label="AP" value="AP" />
+                  <Picker.Item label="AM" value="AM" />
+                  <Picker.Item label="BA" value="BA" />
+                  <Picker.Item label="CE" value="CE" />
+                  <Picker.Item label="DF" value="DF" />
+                  <Picker.Item label="ES" value="ES" />
+                  <Picker.Item label="GO" value="GO" />
+                  <Picker.Item label="MA" value="MA" />
+                  <Picker.Item label="MT" value="MT" />
+                  <Picker.Item label="MS" value="MS" />
+                  <Picker.Item label="MG" value="MG" />
+                  <Picker.Item label="PA" value="PA" />
+                  <Picker.Item label="PB" value="PB" />
+                  <Picker.Item label="PR" value="PR" />
+                  <Picker.Item label="PE" value="PE" />
+                  <Picker.Item label="PI" value="PI" />
+                  <Picker.Item label="RJ" value="RJ" />
+                  <Picker.Item label="RN" value="RN" />
+                  <Picker.Item label="RS" value="RS" />
+                  <Picker.Item label="RO" value="RO" />
+                  <Picker.Item label="RR" value="RR" />
+                  <Picker.Item label="SC" value="SC" />
+                  <Picker.Item label="SP" value="SP" />
+                  <Picker.Item label="SE" value="SE" />
+                  <Picker.Item label="TO" value="TO" />
+                </Picker>
+              </View>
+
+              <TouchableOpacity
+                style={styles.imageButton}
+                onPress={takeImage}
+                disabled={uploading}
+              >
+                <Text style={styles.buttonText}>
+                  {image ? 'Alterar Imagem' : 'Adicionar Imagem'}
+                </Text>
+              </TouchableOpacity>
+
+              {image && (
+                <Image
+                  source={{ uri: image }}
+                  style={styles.imagePreview}
+                />
+              )}
+
+              {uploading && (
+                <ActivityIndicator size="large" color="#0000ff" />
+              )}
+
+              <View style={styles.modalButtonContainer}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonCancel]}
+                  onPress={() => setShowCheckpointModal(false)}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Cancelar</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonConfirm]}
+                  onPress={confirmCheckpoint}
+                  disabled={uploading}
+                >
+                  <Text style={styles.modalButtonText}>Confirmar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {isTracking && (
+          <>
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={motivo}
+                onValueChange={(itemValue) => {
+                  setMotivo(itemValue);
+                  if (itemValue !== 'ronda_em_site') setImage(null);
+                }}
+                dropdownIconColor="#fff"
+                style={styles.picker}
+                enabled={!uploading}
+              >
+                <Picker.Item label="Selecione o motivo" value="" color="#999" />
+                <Picker.Item label="Ronda em site" value="ronda_em_site" color="#000" />
+                <Picker.Item label="Abastecimento" value="abastecimento" color="#000" />
+                <Picker.Item label="Troca de veículo" value="troca_de_veiculo" color="#000" />
+                <Picker.Item label="Outros" value="outros" color="#000" />
+              </Picker>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.button,
+                styles.buttonCheckpoint
+              ]}
+              onPress={handleCheckpoint}
+              disabled={uploading}
+            >
+              <Text style={styles.buttonText}>Registrar Checkpoint</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {isTracking && rondaDetails && (
+          <View style={styles.detailsContainer}>
+            <Text style={styles.detailsTitle}>Detalhes da Ronda</Text>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Início:</Text>
+              <Text style={styles.detailValue}>
+                {new Date(rondaDetails.inicio).toLocaleString()}
+              </Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>KM Inicial:</Text>
+              <Text style={styles.detailValue}>{rondaDetails.kmInicial}</Text>
+            </View>
+
+            {rondaDetails.fim && (
+              <>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Fim:</Text>
+                  <Text style={styles.detailValue}>
+                    {new Date(rondaDetails.fim).toLocaleString()}
+                  </Text>
+                </View>
+
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>KM Final:</Text>
+                  <Text style={styles.detailValue}>{rondaDetails.kmFinal}</Text>
+                </View>
+
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Distância Percorrida:</Text>
+                  <Text style={styles.detailValue}>
+                    {rondaDetails.distanciaPercorrida} km
+                  </Text>
+                </View>
+              </>
+            )}
+
+            {checkpoints.length > 0 && (
+              <View style={styles.checkpointsContainer}>
+                <Text style={styles.checkpointsTitle}>Checkpoints ({checkpoints.length})</Text>
+                {checkpoints.map((cp, index) => (
+                  <View key={index} style={styles.checkpointItem}>
+                    <Text style={styles.checkpointSite}>{cp.site}</Text>
+                    <Text style={styles.checkpointMotivo}>{cp.motivo}</Text>
+                    <Text style={styles.checkpointTime}>
+                      {new Date(cp.timestamp).toLocaleTimeString()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
+
+      {isTracking && (
+        <TouchableOpacity
+          style={styles.panicButton}
+          onPress={handlePanicButton}
+          disabled={uploading}
+        >
+          <MaterialCommunityIcons name="shield-alert-outline" size={40} color="#fff" />
+        </TouchableOpacity>
       )}
-    </ScrollView>
+    </View>
   );
 }
