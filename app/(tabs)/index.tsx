@@ -1,4 +1,4 @@
-import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView, ActivityIndicator, Platform, AppState, AppStateStatus } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -8,10 +8,9 @@ import { useEffect, useState } from 'react';
 import { doc, setDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons'; // Importando o pacote de ícones
-
 import { otherDb, storage } from '@/services/firebaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRonda } from './_layout';
+import { useRonda } from '@/context/RondaContext';
 import styles from '../../assets/styles/stylesIndex';
 
 const LOCATION_TASK_NAME = 'background-location-task';
@@ -62,7 +61,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   const now = Date.now();
   console.log(`Background fetch executado em: ${new Date(now).toISOString()}`);
-  return BackgroundFetch.Result.NewData;
+  return BackgroundFetch.BackgroundFetchResult.NewData;
 });
 
 async function registerBackgroundFetch() {
@@ -92,6 +91,7 @@ async function checkAndRequestPermissions() {
     Alert.alert('Permissão necessária', 'Precisamos de acesso à sua localização.');
     return false;
   }
+
 
   // Verifica permissões de background no Android
   if (Platform.OS === 'android') {
@@ -132,7 +132,7 @@ async function checkBatteryOptimizations() {
 }
 
 export default function HomeScreen() {
-  const { isTracking, setIsTracking } = useRonda();
+  const { isTracking, stopTracking, setIsTracking } = useRonda();
   const [location, setLocation] = useState<any>(null);
   const [subscription, setSubscription] = useState<any>(null);
   const [rondaId, setRondaId] = useState<string | null>(null);
@@ -150,6 +150,30 @@ export default function HomeScreen() {
   const [uf, setUf] = useState<string>('');
   const [showPanicModal, setShowPanicModal] = useState(false);
   const [showCheckpointModal, setShowCheckpointModal] = useState(false);
+
+  useEffect(() => {
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+      // Verifica se o app está sendo fechado ou indo para segundo plano
+      if (nextAppState === 'inactive' || nextAppState === 'background') {
+        if (isTracking) {
+          try {
+            await stopTracking();
+            console.log('Ronda finalizada devido ao fechamento do app');
+          } catch (error) {
+            console.error('Erro ao finalizar ronda:', error);
+          }
+        }
+      }
+    };
+
+    // Adiciona o listener para mudanças de estado do app
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+
+    // Limpeza do efeito
+    return () => {
+      subscription.remove();
+    };
+  }, [isTracking, stopTracking]); // Dependências do useEffect
 
   useEffect(() => {
     registerBackgroundFetch();
@@ -300,7 +324,7 @@ export default function HomeScreen() {
     }
   };
 
-  const stopTracking = async () => {
+  const stopTrackingModal = async () => {
     setShowKmModal('fim');
   };
 
@@ -338,7 +362,7 @@ export default function HomeScreen() {
             })
           ]);
 
-          setRondaDetails(prev => ({
+          setRondaDetails((prev: any) => ({
             ...prev,
             fim: new Date().toISOString(),
             kmFinal: parseFloat(kmFinal),
@@ -376,7 +400,7 @@ export default function HomeScreen() {
     }
   };
 
-  const confirmCheckpoint = async () => {
+const confirmCheckpoint = async () => {
     try {
       let imageUrl = null;
       if (motivo === 'ronda_em_site' && image) {
@@ -392,7 +416,14 @@ export default function HomeScreen() {
         ...(imageUrl && { imageUrl }),
       };
 
-      const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
+      // Correct way to reference a subcollection:
+      const checkpointsRef = collection(
+        otherDb, 
+        'rondas', 
+        rondaId, 
+        'checkpoints'
+      );
+
       await addDoc(checkpointsRef, checkpointData);
 
       setCheckpoints(prev => [...prev, checkpointData]);
@@ -460,7 +491,7 @@ export default function HomeScreen() {
             styles.button,
             isTracking ? styles.buttonStop : styles.buttonStart,
           ]}
-          onPress={isTracking ? stopTracking : startTracking}
+          onPress={isTracking ? stopTrackingModal : startTracking}
           disabled={uploading}
         >
           <Text style={styles.buttonText}>

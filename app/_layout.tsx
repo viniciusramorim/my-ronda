@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { useColorScheme } from '@/hooks/useColorScheme';
+import { RondaProvider } from '@/context/RondaContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -32,23 +33,25 @@ export default function RootLayout() {
       if (!loaded || isLoggedIn === null) {
         router.replace('/(auth)/login');
         await AsyncStorage.removeItem('loggedIn');
-        return null; 
+        return null;
       }
     };
     checkLogin();
   }, []);
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        {isLoggedIn ? (
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        ) : (
-          <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
-        )}
-        <Stack.Screen name="+not-found" />
-      </Stack>
-      <StatusBar style="auto" />
-    </ThemeProvider>
+    <RondaProvider>
+      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+        <Stack>
+          {isLoggedIn ? (
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          ) : (
+            <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
+          )}
+          <Stack.Screen name="+not-found" />
+        </Stack>
+        <StatusBar style="auto" />
+      </ThemeProvider>
+    </RondaProvider>
   );
 }
