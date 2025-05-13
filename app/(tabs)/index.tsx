@@ -62,7 +62,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   const now = Date.now();
   console.log(`Background fetch executado em: ${new Date(now).toISOString()}`);
-  return BackgroundFetch.Result.NewData;
+  return BackgroundFetch.BackgroundFetchResult.NewData;
 });
 
 async function registerBackgroundFetch() {
@@ -338,7 +338,7 @@ export default function HomeScreen() {
             })
           ]);
 
-          setRondaDetails(prev => ({
+          setRondaDetails((prev:any) => ({
             ...prev,
             fim: new Date().toISOString(),
             kmFinal: parseFloat(kmFinal),
