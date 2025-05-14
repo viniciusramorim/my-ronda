@@ -33,7 +33,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const { locations } = data as any;
     const location = locations[0];
     if (location) {
-      console.log('Localização em segundo plano:', location);
+      console.log('Localização em segundo plano');
       const rondaId = await AsyncStorage.getItem('rondaId');
       const uid = await AsyncStorage.getItem('userUid');
       if (rondaId && uid) {
@@ -45,6 +45,8 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
             longitude: location.coords.longitude,
             timestamp: new Date().toISOString(),
           },
+        }).then(() => {
+          console.log('Localização em segundo plano gravado')
         });
         await updateDoc(userRef, {
           status_ronda: "Em Ronda",
@@ -53,7 +55,9 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
             longitude: location.coords.longitude,
             timestamp: new Date().toISOString(),
           },
-        });
+        }).then(() => {
+          console.log('Localização em segundo plano gravado')
+        });;
       }
     }
   }
@@ -137,7 +141,7 @@ export default function HomeScreen() {
   const [subscription, setSubscription] = useState<any>(null);
   const [rondaId, setRondaId] = useState<string | null>(null);
   const [siteCode, setSiteCode] = useState<string>('');
-  const [motivo, setMotivo] = useState<string>('Ronda em site');
+  const [motivo, setMotivo] = useState<string>('');
   const [user, setUser] = useState<string | null>('');
   const [uid, setUid] = useState<string | null>(null);
   const [image, setImage] = useState<string | null>(null);
