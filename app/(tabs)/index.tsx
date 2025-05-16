@@ -1,4 +1,4 @@
-import { View, Alert, TextInput, TouchableOpacity, Text, Image, Modal, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -13,6 +13,10 @@ import { otherDb, storage } from '@/services/firebaseConfig';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRonda } from './_layout';
 import styles from '../../assets/styles/stylesIndex';
+//modals
+import KmModal from '@/components/modals/KmModal';
+import PanicModal from '@/components/modals/PanicModal';
+import CheckpointModal from '@/components/modals/CheckpointModal';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 const BACKGROUND_FETCH_TASK = 'background-fetch-task';
@@ -157,8 +161,9 @@ export default function HomeScreen() {
 
   useEffect(() => {
     registerBackgroundFetch();
-    userData();
     checkAndRequestPermissions();
+    userData();
+    verificarRondaAtiva();
     (async () => {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
@@ -166,6 +171,53 @@ export default function HomeScreen() {
       }
     })();
   }, []);
+
+  const verificarRondaAtiva = async () => {
+    const rondaSalva = await AsyncStorage.getItem('rondaId');
+    const userUid = await AsyncStorage.getItem('userUid');
+
+    if (rondaSalva && userUid) {
+      setRondaId(rondaSalva);
+      setUid(userUid);
+      setIsTracking(true); // ativa o estado visual de tracking
+
+      const sub = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 10000,
+          distanceInterval: 0,
+        },
+        async (loc) => {
+          setLocation(loc);
+          try {
+            const rondaRef = doc(otherDb, 'rondas', rondaSalva);
+            const userRef = doc(otherDb, 'usuarios', userUid);
+
+            await updateDoc(rondaRef, {
+              ultimaLocalizacao: {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                timestamp: new Date().toISOString(),
+              },
+            });
+
+            await updateDoc(userRef, {
+              status_ronda: "Em Ronda",
+              ultimaLocalizacao: {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          } catch (err) {
+            console.error('Erro ao retomar atualização de localização:', err);
+          }
+        }
+      );
+
+      setSubscription(sub);
+    }
+  };
 
   const takeImage = async () => {
     let result = await ImagePicker.launchCameraAsync({
@@ -253,6 +305,7 @@ export default function HomeScreen() {
       setIsTracking(true);
       setShowKmModal(null);
       setCheckpoints([]);
+      setImage(null); // Limpa a imagem após o upload
 
       await AsyncStorage.setItem('rondaId', novaRondaId);
 
@@ -300,7 +353,6 @@ export default function HomeScreen() {
           notificationColor: '#0000ff',
         },
       });
-
     } catch (error) {
       console.error('Erro ao iniciar rastreamento:', error);
       Alert.alert('Erro', 'Não foi possível iniciar o rastreamento.');
@@ -367,6 +419,7 @@ export default function HomeScreen() {
         setKmFinal('');
         setShowKmModal(null);
         setCheckpoints([]);
+        setImage(null); // Limpa a imagem
       }, 1000);
     }
 
@@ -478,256 +531,51 @@ export default function HomeScreen() {
           </Text>
         </TouchableOpacity>
 
-        <Modal
-          visible={showKmModal !== null}
-          transparent={true}
-          animationType="slide"
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>
-                {showKmModal === 'inicio' ? 'Quilometragem Inicial' : 'Quilometragem Final'}
-              </Text>
-
-              <TextInput
-                style={styles.modalInput}
-                placeholder={`Digite o KM ${showKmModal === 'inicio' ? 'inicial' : 'final'}`}
-                placeholderTextColor="#999"
-                keyboardType="numeric"
-                value={showKmModal === 'inicio' ? kmInicial : kmFinal}
-                onChangeText={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
-                editable={!uploading}
-              />
-
-              {rondaDetails.imagemInicial && (
-                <View style={styles.imageContainer}>
-                  <Text style={styles.detailLabel}>Imagem Inicial:</Text>
-                  <Image source={{ uri: rondaDetails.imagemInicial }} style={styles.imagePreview} />
-                </View>
-              )}
-
-              {rondaDetails.imagemFinal && (
-                <View style={styles.imageContainer}>
-                  <Text style={styles.detailLabel}>Imagem Final:</Text>
-                  <Image source={{ uri: rondaDetails.imagemFinal }} style={styles.imagePreview} />
-                </View>
-              )}
-
-              <View style={styles.modalButtonContainer}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonCancel]}
-                  onPress={() => setShowKmModal(null)}
-                  disabled={uploading}
-                >
-                  <Text style={styles.modalButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonConfirm]}
-                  onPress={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
-                  disabled={uploading}
-                >
-                  <Text style={styles.modalButtonText}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
+        <Modal visible={showKmModal !== null} transparent={true} animationType="slide">
+          <KmModal
+            visible={showKmModal !== null}
+            type={showKmModal}
+            kmValue={showKmModal === 'inicio' ? kmInicial : kmFinal}
+            onKmChange={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
+            image={image}
+            onTakeImage={takeImage}
+            onCancel={() => {
+              setShowKmModal(null);
+              setImage(null);
+            }}
+            onConfirm={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
+            uploading={uploading}
+          />
         </Modal>
 
-        <Modal
-          visible={showPanicModal}
-          transparent={true}
-          animationType="slide"
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Registrar Incidencia</Text>
-
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Sigla (ex: SP1)"
-                placeholderTextColor="#999"
-                value={siteCode}
-                onChangeText={(text) => setSiteCode(text)}
-                editable={!uploading}
-              />
-
-              <View style={styles.pickerContainerUF}>
-                <Picker
-                  selectedValue={uf}
-                  onValueChange={(itemValue) => setUf(itemValue)}
-                  style={styles.ufPicker}
-                  enabled={!uploading}
-                >
-                  <Picker.Item label="UF" value="" color="#999" />
-                  <Picker.Item label="AC" value="AC" />
-                  <Picker.Item label="AL" value="AL" />
-                  <Picker.Item label="AP" value="AP" />
-                  <Picker.Item label="AM" value="AM" />
-                  <Picker.Item label="BA" value="BA" />
-                  <Picker.Item label="CE" value="CE" />
-                  <Picker.Item label="DF" value="DF" />
-                  <Picker.Item label="ES" value="ES" />
-                  <Picker.Item label="GO" value="GO" />
-                  <Picker.Item label="MA" value="MA" />
-                  <Picker.Item label="MT" value="MT" />
-                  <Picker.Item label="MS" value="MS" />
-                  <Picker.Item label="MG" value="MG" />
-                  <Picker.Item label="PA" value="PA" />
-                  <Picker.Item label="PB" value="PB" />
-                  <Picker.Item label="PR" value="PR" />
-                  <Picker.Item label="PE" value="PE" />
-                  <Picker.Item label="PI" value="PI" />
-                  <Picker.Item label="RJ" value="RJ" />
-                  <Picker.Item label="RN" value="RN" />
-                  <Picker.Item label="RS" value="RS" />
-                  <Picker.Item label="RO" value="RO" />
-                  <Picker.Item label="RR" value="RR" />
-                  <Picker.Item label="SC" value="SC" />
-                  <Picker.Item label="SP" value="SP" />
-                  <Picker.Item label="SE" value="SE" />
-                  <Picker.Item label="TO" value="TO" />
-                </Picker>
-              </View>
-
-              <TouchableOpacity
-                style={styles.imageButton}
-                onPress={takeImage}
-                disabled={uploading}
-              >
-                <Text style={styles.buttonText}>
-                  {image ? 'Alterar Imagem' : 'Adicionar Imagem'}
-                </Text>
-              </TouchableOpacity>
-
-              {image && (
-                <Image
-                  source={{ uri: image }}
-                  style={styles.imagePreview}
-                />
-              )}
-
-              {uploading && (
-                <ActivityIndicator size="large" color="#0000ff" />
-              )}
-
-              <View style={styles.modalButtonContainer}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonCancel]}
-                  onPress={() => setShowPanicModal(false)}
-                  disabled={uploading}
-                >
-                  <Text style={styles.modalButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonConfirm]}
-                  onPress={confirmPanicCheckpoint}
-                  disabled={uploading}
-                >
-                  <Text style={styles.modalButtonText}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
+        <Modal visible={showPanicModal} transparent={true} animationType="slide">
+          <PanicModal
+            visible={showPanicModal}
+            siteCode={siteCode}
+            onSiteCodeChange={setSiteCode}
+            uf={uf}
+            onUfChange={setUf}
+            image={image}
+            onTakeImage={takeImage}
+            onCancel={() => setShowPanicModal(false)}
+            onConfirm={confirmPanicCheckpoint}
+            uploading={uploading}
+          />
         </Modal>
 
-        <Modal
-          visible={showCheckpointModal}
-          transparent={true}
-          animationType="slide"
-        >
-          <View style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Registrar Checkpoint</Text>
-
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Sigla (ex: SP1)"
-                placeholderTextColor="#999"
-                value={siteCode}
-                onChangeText={(text) => setSiteCode(text)}
-                editable={!uploading}
-              />
-
-              <View style={styles.pickerContainerUF}>
-                <Picker
-                  selectedValue={uf}
-                  onValueChange={(itemValue) => setUf(itemValue)}
-                  style={styles.ufPicker}
-                  enabled={!uploading}
-                >
-                  <Picker.Item label="UF" value="" color="#999" />
-                  <Picker.Item label="AC" value="AC" />
-                  <Picker.Item label="AL" value="AL" />
-                  <Picker.Item label="AP" value="AP" />
-                  <Picker.Item label="AM" value="AM" />
-                  <Picker.Item label="BA" value="BA" />
-                  <Picker.Item label="CE" value="CE" />
-                  <Picker.Item label="DF" value="DF" />
-                  <Picker.Item label="ES" value="ES" />
-                  <Picker.Item label="GO" value="GO" />
-                  <Picker.Item label="MA" value="MA" />
-                  <Picker.Item label="MT" value="MT" />
-                  <Picker.Item label="MS" value="MS" />
-                  <Picker.Item label="MG" value="MG" />
-                  <Picker.Item label="PA" value="PA" />
-                  <Picker.Item label="PB" value="PB" />
-                  <Picker.Item label="PR" value="PR" />
-                  <Picker.Item label="PE" value="PE" />
-                  <Picker.Item label="PI" value="PI" />
-                  <Picker.Item label="RJ" value="RJ" />
-                  <Picker.Item label="RN" value="RN" />
-                  <Picker.Item label="RS" value="RS" />
-                  <Picker.Item label="RO" value="RO" />
-                  <Picker.Item label="RR" value="RR" />
-                  <Picker.Item label="SC" value="SC" />
-                  <Picker.Item label="SP" value="SP" />
-                  <Picker.Item label="SE" value="SE" />
-                  <Picker.Item label="TO" value="TO" />
-                </Picker>
-              </View>
-
-              <TouchableOpacity
-                style={styles.imageButton}
-                onPress={takeImage}
-                disabled={uploading}
-              >
-                <Text style={styles.buttonText}>
-                  {image ? 'Alterar Imagem' : 'Adicionar Imagem'}
-                </Text>
-              </TouchableOpacity>
-
-              {image && (
-                <Image
-                  source={{ uri: image }}
-                  style={styles.imagePreview}
-                />
-              )}
-
-              {uploading && (
-                <ActivityIndicator size="large" color="#0000ff" />
-              )}
-
-              <View style={styles.modalButtonContainer}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonCancel]}
-                  onPress={() => setShowCheckpointModal(false)}
-                  disabled={uploading}
-                >
-                  <Text style={styles.modalButtonText}>Cancelar</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.modalButtonConfirm]}
-                  onPress={confirmCheckpoint}
-                  disabled={uploading}
-                >
-                  <Text style={styles.modalButtonText}>Confirmar</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
+        <Modal visible={showCheckpointModal} transparent={true} animationType="slide">
+          <CheckpointModal
+            visible={showCheckpointModal}
+            siteCode={siteCode}
+            onSiteCodeChange={setSiteCode}
+            uf={uf}
+            onUfChange={setUf}
+            image={image}
+            onTakeImage={takeImage}
+            onCancel={() => setShowCheckpointModal(false)}
+            onConfirm={confirmCheckpoint}
+            uploading={uploading}
+          />
         </Modal>
 
         {isTracking && (
