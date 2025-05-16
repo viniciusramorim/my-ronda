@@ -264,6 +264,11 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.8,
         shadowRadius: 2,
     },
+    imageContainer: {
+        marginVertical: 10,
+        alignItems: 'center',
+    },
+
 });
 
 export default styles;

@@ -234,6 +234,8 @@ export default function HomeScreen() {
       const rondaRef = doc(otherDb, 'rondas', novaRondaId);
       const userRef = doc(otherDb, 'usuarios', uid);
 
+      const imageUrl = await uploadImage(); // Upload da imagem
+
       const rondaData = {
         nomeRonda: `Ronda_${new Date().toLocaleString()}`,
         inicio: new Date().toISOString(),
@@ -241,6 +243,7 @@ export default function HomeScreen() {
         ultimaLocalizacao: null,
         uid: uid,
         timestamp: new Date().toISOString(),
+        imagemInicial: imageUrl, // Adiciona a URL da imagem inicial
       };
 
       await setDoc(rondaRef, rondaData);
@@ -330,23 +333,26 @@ export default function HomeScreen() {
           const userRef = doc(otherDb, 'usuarios', uid);
 
           const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
+          const imageUrl = await uploadImage(); // Upload da imagem
 
           await Promise.all([
             updateDoc(rondaRef, {
               fim: new Date().toISOString(),
               kmFinal: parseFloat(kmFinal),
               distanciaPercorrida,
+              imagemFinal: imageUrl, // Adiciona a URL da imagem final
             }),
             updateDoc(userRef, {
               status_ronda: "Parado"
             })
           ]);
 
-          setRondaDetails((prev:any) => ({
+          setRondaDetails((prev: any) => ({
             ...prev,
             fim: new Date().toISOString(),
             kmFinal: parseFloat(kmFinal),
-            distanciaPercorrida
+            distanciaPercorrida,
+            imagemFinal: imageUrl, // Adiciona a URL da imagem final
           }));
         } catch (error) {
           console.error('Erro ao atualizar documentos:', error);
@@ -492,6 +498,20 @@ export default function HomeScreen() {
                 onChangeText={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
                 editable={!uploading}
               />
+
+              {rondaDetails.imagemInicial && (
+                <View style={styles.imageContainer}>
+                  <Text style={styles.detailLabel}>Imagem Inicial:</Text>
+                  <Image source={{ uri: rondaDetails.imagemInicial }} style={styles.imagePreview} />
+                </View>
+              )}
+
+              {rondaDetails.imagemFinal && (
+                <View style={styles.imageContainer}>
+                  <Text style={styles.detailLabel}>Imagem Final:</Text>
+                  <Image source={{ uri: rondaDetails.imagemFinal }} style={styles.imagePreview} />
+                </View>
+              )}
 
               <View style={styles.modalButtonContainer}>
                 <TouchableOpacity

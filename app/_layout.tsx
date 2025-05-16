@@ -5,7 +5,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
 import { useColorScheme } from '@/hooks/useColorScheme';
 
 SplashScreen.preventAutoHideAsync();
@@ -28,15 +27,22 @@ export default function RootLayout() {
     const checkLogin = async () => {
       const logged = await AsyncStorage.getItem('loggedIn');
       setIsLoggedIn(logged === 'true');
-      console.log("Logado: " + isLoggedIn)
-      if (!loaded || isLoggedIn === null) {
-        router.replace('/(auth)/login');
-        await AsyncStorage.removeItem('loggedIn');
-        return null; 
-      }
     };
     checkLogin();
   }, []);
+
+  useEffect(() => {
+    if (loaded && isLoggedIn !== null) {
+      if (!isLoggedIn) {
+        router.replace('/(auth)/login');
+        AsyncStorage.removeItem('loggedIn');
+      }
+    }
+  }, [loaded, isLoggedIn]);
+
+  if (!loaded || isLoggedIn === null) {
+    return null; // Ou um componente de carregamento
+  }
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
