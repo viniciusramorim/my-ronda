@@ -7,6 +7,8 @@ interface KmModalProps {
   type: 'inicio' | 'fim' | null;
   kmValue: string;
   onKmChange: (text: string) => void;
+  placaValue: string;
+  onPlacaChange: (text: string) => void;
   image: string | null;
   onTakeImage: () => void;
   onCancel: () => void;
@@ -19,6 +21,8 @@ const KmModal: React.FC<KmModalProps> = ({
   type,
   kmValue,
   onKmChange,
+  placaValue,
+  onPlacaChange,
   image,
   onTakeImage,
   onCancel,
@@ -41,6 +45,15 @@ const KmModal: React.FC<KmModalProps> = ({
           keyboardType="numeric"
           value={kmValue}
           onChangeText={onKmChange}
+          editable={!uploading}
+        />
+
+        <TextInput
+          style={styles.modalInput}
+          placeholder="Placa do Veículo"
+          placeholderTextColor="#999"
+          value={placaValue}
+          onChangeText={onPlacaChange}
           editable={!uploading}
         />
 

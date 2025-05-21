@@ -5,7 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
 import { useEffect, useState } from 'react';
-import { doc, setDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons'; // Importando o pacote de ícones
 
@@ -152,6 +152,8 @@ export default function HomeScreen() {
   const [uploading, setUploading] = useState(false);
   const [kmInicial, setKmInicial] = useState<string>('');
   const [kmFinal, setKmFinal] = useState<string>('');
+  const [placaInicial, setPlacaInicial] = useState<string>('');
+  const [placaFinal, setPlacaFinal] = useState<string>('');
   const [showKmModal, setShowKmModal] = useState<'inicio' | 'fim' | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [rondaDetails, setRondaDetails] = useState<any>(null);
@@ -181,6 +183,13 @@ export default function HomeScreen() {
       setUid(userUid);
       setIsTracking(true); // ativa o estado visual de tracking
 
+      // Recupera os detalhes da ronda do Firestore
+      const rondaRef = doc(otherDb, 'rondas', rondaSalva);
+      const rondaDoc = await getDoc(rondaRef);
+      if (rondaDoc.exists()) {
+        setRondaDetails(rondaDoc.data());
+      }
+
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
@@ -190,9 +199,6 @@ export default function HomeScreen() {
         async (loc) => {
           setLocation(loc);
           try {
-            const rondaRef = doc(otherDb, 'rondas', rondaSalva);
-            const userRef = doc(otherDb, 'usuarios', userUid);
-
             await updateDoc(rondaRef, {
               ultimaLocalizacao: {
                 latitude: loc.coords.latitude,
@@ -201,6 +207,7 @@ export default function HomeScreen() {
               },
             });
 
+            const userRef = doc(otherDb, 'usuarios', userUid);
             await updateDoc(userRef, {
               status_ronda: "Em Ronda",
               ultimaLocalizacao: {
@@ -271,8 +278,8 @@ export default function HomeScreen() {
   };
 
   const confirmStartTracking = async () => {
-    if (!kmInicial) {
-      Alert.alert('Erro', 'Por favor, informe a quilometragem inicial.');
+    if (!kmInicial || !placaInicial) {
+      Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
       return;
     }
 
@@ -292,6 +299,7 @@ export default function HomeScreen() {
         nomeRonda: `Ronda_${new Date().toLocaleString()}`,
         inicio: new Date().toISOString(),
         kmInicial: parseFloat(kmInicial),
+        placaInicial,
         ultimaLocalizacao: null,
         uid: uid,
         timestamp: new Date().toISOString(),
@@ -364,8 +372,8 @@ export default function HomeScreen() {
   };
 
   const confirmStopTracking = async () => {
-    if (!kmFinal) {
-      Alert.alert('Erro', 'Por favor, informe a quilometragem final.');
+    if (!kmFinal || !placaFinal) {
+      Alert.alert('Erro', 'Por favor, informe a quilometragem final e a placa do veículo.');
       return;
     }
 
@@ -391,6 +399,7 @@ export default function HomeScreen() {
             updateDoc(rondaRef, {
               fim: new Date().toISOString(),
               kmFinal: parseFloat(kmFinal),
+              placaFinal,
               distanciaPercorrida,
               imagemFinal: imageUrl, // Adiciona a URL da imagem final
             }),
@@ -403,6 +412,7 @@ export default function HomeScreen() {
             ...prev,
             fim: new Date().toISOString(),
             kmFinal: parseFloat(kmFinal),
+            placaFinal,
             distanciaPercorrida,
             imagemFinal: imageUrl, // Adiciona a URL da imagem final
           }));
@@ -417,10 +427,15 @@ export default function HomeScreen() {
         setRondaDetails(null);
         setKmInicial('');
         setKmFinal('');
+        setPlacaInicial('');
+        setPlacaFinal('');
         setShowKmModal(null);
         setCheckpoints([]);
         setImage(null); // Limpa a imagem
       }, 1000);
+
+      // Limpa o ID da ronda do AsyncStorage
+      await AsyncStorage.removeItem('rondaId');
     }
 
     await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
@@ -537,6 +552,8 @@ export default function HomeScreen() {
             type={showKmModal}
             kmValue={showKmModal === 'inicio' ? kmInicial : kmFinal}
             onKmChange={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
+            placaValue={showKmModal === 'inicio' ? placaInicial : placaFinal}
+            onPlacaChange={showKmModal === 'inicio' ? setPlacaInicial : setPlacaFinal}
             image={image}
             onTakeImage={takeImage}
             onCancel={() => {
@@ -628,6 +645,11 @@ export default function HomeScreen() {
               <Text style={styles.detailValue}>{rondaDetails.kmInicial}</Text>
             </View>
 
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Placa Inicial:</Text>
+              <Text style={styles.detailValue}>{rondaDetails.placaInicial}</Text>
+            </View>
+
             {rondaDetails.fim && (
               <>
                 <View style={styles.detailRow}>
@@ -640,6 +662,11 @@ export default function HomeScreen() {
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>KM Final:</Text>
                   <Text style={styles.detailValue}>{rondaDetails.kmFinal}</Text>
+                </View>
+
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Placa Final:</Text>
+                  <Text style={styles.detailValue}>{rondaDetails.placaFinal}</Text>
                 </View>
 
                 <View style={styles.detailRow}>
