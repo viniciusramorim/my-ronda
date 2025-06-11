@@ -216,6 +216,7 @@ export default function HomeScreen() {
                 timestamp: new Date().toISOString(),
               },
             });
+            console.log('Ronda registrada com sucesso!');
           } catch (err) {
             console.error('Erro ao retomar atualização de localização:', err);
           }
