@@ -1,13 +1,11 @@
 import { Tabs, useRouter } from 'expo-router';
 import React, { createContext, useContext, useState } from 'react';
-import { Platform, Pressable, Text } from 'react-native';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { HapticTab } from '@/components/HapticTab';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import TabBarBackground from '@/components/ui/TabBarBackground';
-import { Colors } from '@/constants/Colors';
-import { useColorScheme } from '@/hooks/useColorScheme';
 
 // Criando um contexto para compartilhar o estado da ronda
 const RondaContext = createContext({
@@ -18,7 +16,6 @@ const RondaContext = createContext({
 export const useRonda = () => useContext(RondaContext);
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const router = useRouter();
   const [isTracking, setIsTracking] = useState(false);
 
@@ -31,15 +28,7 @@ export default function TabLayout() {
     <RondaContext.Provider value={{ isTracking, setIsTracking }}>
       <Tabs
         screenOptions={{
-          tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-          headerShown: true,
-          headerRight: () => (
-            !isTracking && (
-              <Pressable onPress={handleLogout} style={{ marginRight: 16 }}>
-                <Text style={{ color: Colors[colorScheme ?? 'light'].tint, fontWeight: '600' }}>Sair</Text>
-              </Pressable>
-            )
-          ),
+          headerShown: false,
           tabBarButton: HapticTab,
           tabBarBackground: TabBarBackground,
           tabBarStyle: Platform.select({
@@ -55,6 +44,13 @@ export default function TabLayout() {
           options={{
             title: 'Inicio',
             tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="logout"
+          options={{
+            title: 'Sair',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="chevron.right" color={color} />,
           }}
         />
       </Tabs>

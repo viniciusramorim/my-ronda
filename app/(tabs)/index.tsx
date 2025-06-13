@@ -1,19 +1,18 @@
-import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform } from 'react-native';
+import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { doc, setDoc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { MaterialCommunityIcons } from '@expo/vector-icons'; // Importando o pacote de ícones
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { otherDb, storage } from '@/services/firebaseConfig';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRonda } from './_layout';
 import styles from '../../assets/styles/stylesIndex';
-//modals
 import KmModal from '@/components/modals/KmModal';
 import PanicModal from '@/components/modals/PanicModal';
 import CheckpointModal from '@/components/modals/CheckpointModal';
@@ -28,116 +27,74 @@ interface Checkpoint {
   imageUrl?: string;
 }
 
+// Definição da tarefa de localização em background
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
+    if (error.code === 'TASK_NOT_REGISTERED') {
+      console.log('Tarefa de localização não registrada. Tentando registrar novamente...');
+      return;
+    }
     console.error('Erro na tarefa de localização em segundo plano:', error);
     return;
   }
+
   if (data) {
     const { locations } = data as any;
     const location = locations[0];
     if (location) {
-      console.log('Localização em segundo plano');
-      const rondaId = await AsyncStorage.getItem('rondaId');
-      const uid = await AsyncStorage.getItem('userUid');
-      if (rondaId && uid) {
-        const rondaRef = doc(otherDb, 'rondas', rondaId);
-        const userRef = doc(otherDb, 'usuarios', uid);
-        await updateDoc(rondaRef, {
-          ultimaLocalizacao: {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            timestamp: new Date().toISOString(),
-          },
-        }).then(() => {
-          console.log('Localização em segundo plano gravado')
-        });
-        await updateDoc(userRef, {
-          status_ronda: "Em Ronda",
-          ultimaLocalizacao: {
-            latitude: location.coords.latitude,
-            longitude: location.coords.longitude,
-            timestamp: new Date().toISOString(),
-          },
-        }).then(() => {
-          console.log('Localização em segundo plano gravado')
-        });;
+      console.log('Localização em segundo plano recebida:', new Date().toISOString());
+      try {
+        const rondaId = await AsyncStorage.getItem('rondaId');
+        const uid = await AsyncStorage.getItem('userUid');
+        
+        if (rondaId && uid) {
+          const rondaRef = doc(otherDb, 'rondas', rondaId);
+          const userRef = doc(otherDb, 'usuarios', uid);
+          
+          await Promise.all([
+            updateDoc(rondaRef, {
+              ultimaLocalizacao: {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                timestamp: new Date().toISOString(),
+              },
+            }),
+            updateDoc(userRef, {
+              status_ronda: "Em Ronda",
+              ultimaLocalizacao: {
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+                timestamp: new Date().toISOString(),
+              },
+            })
+          ]);
+        }
+      } catch (err) {
+        console.error('Erro ao salvar localização em background:', err);
       }
     }
   }
 });
 
+// Definição da tarefa de background fetch
 TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   const now = Date.now();
   console.log(`Background fetch executado em: ${new Date(now).toISOString()}`);
+  
+  // Verificar se há dados pendentes para sincronizar
+  try {
+    const pendingSync = await AsyncStorage.getItem('pendingSync');
+    if (pendingSync) {
+      // Implemente sua lógica de sincronização aqui
+      console.log('Sincronizando dados pendentes...');
+      await AsyncStorage.removeItem('pendingSync');
+    }
+  } catch (error) {
+    console.error('Erro durante background fetch:', error);
+  }
+  
   return BackgroundFetch.BackgroundFetchResult.NewData;
 });
-
-async function registerBackgroundFetch() {
-  try {
-    await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
-      minimumInterval: 15 * 60,
-      stopOnTerminate: false,
-      startOnBoot: true,
-    });
-    console.log('Background fetch registrado!');
-  } catch (err) {
-    console.log('Erro ao registrar background fetch:', err);
-  }
-}
-
-// Função para verificar e solicitar permissões
-async function checkAndRequestPermissions() {
-  // Verifica permissões de câmera
-  const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
-  if (cameraStatus.status !== 'granted') {
-    Alert.alert('Permissão necessária', 'Precisamos de acesso à sua câmera para tirar fotos.');
-  }
-
-  // Verifica permissões de localização
-  const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
-  if (foregroundStatus !== 'granted') {
-    Alert.alert('Permissão necessária', 'Precisamos de acesso à sua localização.');
-    return false;
-  }
-
-  // Verifica permissões de background no Android
-  if (Platform.OS === 'android') {
-    const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-    if (backgroundStatus !== 'granted') {
-      Alert.alert(
-        'Permissão necessária',
-        'Para rastreamento contínuo, precisamos de acesso à sua localização em segundo plano.',
-        [
-          { text: 'Cancelar', style: 'cancel' },
-          { text: 'Abrir Configurações', onPress: () => Location.openSettings() }
-        ]
-      );
-      return false;
-    }
-  }
-
-  return true;
-}
-
-// Função para verificar otimizações de bateria no Android
-async function checkBatteryOptimizations() {
-  if (Platform.OS === 'android') {
-    const batteryOptimizationEnabled = await Location.hasServicesEnabledAsync();
-    if (!batteryOptimizationEnabled) {
-      Alert.alert(
-        "Modo de Economia Ativo",
-        "Para o rastreamento funcionar corretamente, desative as otimizações de bateria para este app nas configurações do dispositivo.",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Abrir Configurações", onPress: () => Location.openSettings() }
-        ]
-      );
-      return false;
-    }
-  }
-  return true;
-}
 
 export default function HomeScreen() {
   const { isTracking, setIsTracking } = useRonda();
@@ -160,85 +117,247 @@ export default function HomeScreen() {
   const [uf, setUf] = useState<string>('');
   const [showPanicModal, setShowPanicModal] = useState(false);
   const [showCheckpointModal, setShowCheckpointModal] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState);
 
-  useEffect(() => {
-    registerBackgroundFetch();
-    checkAndRequestPermissions();
-    userData();
-    verificarRondaAtiva();
-    (async () => {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      if (status !== 'granted') {
-        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua câmera para tirar fotos.');
-      }
-    })();
+  // Registrar tarefas de background
+  const registerBackgroundTasks = useCallback(async () => {
+    try {
+      // Registrar background fetch
+      await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
+        minimumInterval: 15 * 60, // 15 minutos
+        stopOnTerminate: false,
+        startOnBoot: true,
+      });
+      console.log('Background fetch registrado com sucesso');
+    } catch (err) {
+      console.log('Erro ao registrar background fetch:', err);
+    }
   }, []);
 
-  const verificarRondaAtiva = async () => {
-    const rondaSalva = await AsyncStorage.getItem('rondaId');
-    const userUid = await AsyncStorage.getItem('userUid');
-
-    if (rondaSalva && userUid) {
-      setRondaId(rondaSalva);
-      setUid(userUid);
-      setIsTracking(true); // ativa o estado visual de tracking
-
-      // Recupera os detalhes da ronda do Firestore
-      const rondaRef = doc(otherDb, 'rondas', rondaSalva);
-      const rondaDoc = await getDoc(rondaRef);
-      if (rondaDoc.exists()) {
-        setRondaDetails(rondaDoc.data());
+  // Verificar e solicitar permissões
+  const checkAndRequestPermissions = useCallback(async () => {
+    try {
+      // Permissões de câmera
+      const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
+      if (cameraStatus.status !== 'granted') {
+        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua câmera para tirar fotos.');
       }
+
+      // Permissões de localização em foreground
+      const { status: foregroundStatus } = await Location.requestForegroundPermissionsAsync();
+      if (foregroundStatus !== 'granted') {
+        Alert.alert('Permissão necessária', 'Precisamos de acesso à sua localização.');
+        return false;
+      }
+
+      // Permissões de background no Android
+      if (Platform.OS === 'android') {
+        const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+        if (backgroundStatus !== 'granted') {
+          Alert.alert(
+            'Permissão necessária',
+            'Para rastreamento contínuo, precisamos de acesso à sua localização em segundo plano.',
+            [
+              { text: 'Cancelar', style: 'cancel' },
+              { text: 'Abrir Configurações', onPress: () => Location.openSettings() }
+            ]
+          );
+          return false;
+        }
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Erro ao verificar permissões:', error);
+      return false;
+    }
+  }, []);
+
+  // Verificar otimizações de bateria no Android
+  const checkBatteryOptimizations = useCallback(async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const batteryOptimizationEnabled = await Location.hasServicesEnabledAsync();
+        if (!batteryOptimizationEnabled) {
+          Alert.alert(
+            "Modo de Economia Ativo",
+            "Para o rastreamento funcionar corretamente, desative as otimizações de bateria para este app nas configurações do dispositivo.",
+            [
+              { text: "Cancelar", style: "cancel" },
+              { text: "Abrir Configurações", onPress: () => Location.openSettings() }
+            ]
+          );
+          return false;
+        }
+      } catch (error) {
+        console.error('Erro ao verificar otimizações de bateria:', error);
+      }
+    }
+    return true;
+  }, []);
+
+  // Carregar dados do usuário
+  const userData = useCallback(async () => {
+    try {
+      const nome = await AsyncStorage.getItem('userName');
+      const userUid = await AsyncStorage.getItem('userUid');
+      setUser(nome);
+      setUid(userUid);
+    } catch (error) {
+      console.error('Erro ao carregar dados do usuário:', error);
+    }
+  }, []);
+
+  // Verificar ronda ativa
+  const verificarRondaAtiva = useCallback(async () => {
+    try {
+      const rondaSalva = await AsyncStorage.getItem('rondaId');
+      const userUid = await AsyncStorage.getItem('userUid');
+
+      if (rondaSalva && userUid) {
+        setRondaId(rondaSalva);
+        setUid(userUid);
+        setIsTracking(true);
+
+        // Recuperar detalhes da ronda
+        const rondaRef = doc(otherDb, 'rondas', rondaSalva);
+        const rondaDoc = await getDoc(rondaRef);
+        if (rondaDoc.exists()) {
+          setRondaDetails(rondaDoc.data());
+        }
+
+        // Iniciar monitoramento de localização
+        await startLocationTracking(rondaSalva, userUid);
+      }
+    } catch (error) {
+      console.error('Erro ao verificar ronda ativa:', error);
+    }
+  }, []);
+
+  // Iniciar monitoramento de localização
+  const startLocationTracking = useCallback(async (rondaId: string, userId: string) => {
+    try {
+      const rondaRef = doc(otherDb, 'rondas', rondaId);
+      const userRef = doc(otherDb, 'usuarios', userId);
 
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 10000,
+          timeInterval: 5000,
           distanceInterval: 0,
         },
         async (loc) => {
           setLocation(loc);
           try {
-            await updateDoc(rondaRef, {
-              ultimaLocalizacao: {
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                timestamp: new Date().toISOString(),
-              },
-            });
-
-            const userRef = doc(otherDb, 'usuarios', userUid);
-            await updateDoc(userRef, {
-              status_ronda: "Em Ronda",
-              ultimaLocalizacao: {
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                timestamp: new Date().toISOString(),
-              },
-            });
+            await Promise.all([
+              updateDoc(rondaRef, {
+                ultimaLocalizacao: {
+                  latitude: loc.coords.latitude,
+                  longitude: loc.coords.longitude,
+                  timestamp: new Date().toISOString(),
+                },
+              }),
+              updateDoc(userRef, {
+                status_ronda: "Em Ronda",
+                ultimaLocalizacao: {
+                  latitude: loc.coords.latitude,
+                  longitude: loc.coords.longitude,
+                  timestamp: new Date().toISOString(),
+                },
+              })
+            ]);
           } catch (err) {
-            console.error('Erro ao retomar atualização de localização:', err);
+            console.error('Erro ao atualizar localização:', err);
           }
         }
       );
 
       setSubscription(sub);
-    }
-  };
 
+      // Iniciar serviço de background
+      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+        accuracy: Location.Accuracy.High,
+        timeInterval: 5000,
+        distanceInterval: 0,
+        showsBackgroundLocationIndicator: true,
+        foregroundService: {
+          notificationTitle: 'Rastreamento de Localização',
+          notificationBody: 'Seu aplicativo está rastreando sua localização.',
+          notificationColor: '#0000ff',
+        },
+      });
+
+      console.log('Monitoramento de localização iniciado');
+    } catch (error) {
+      console.error('Erro ao iniciar monitoramento de localização:', error);
+    }
+  }, []);
+
+  // Lidar com mudanças no estado do app
+  useEffect(() => {
+    const handleAppStateChange = async (nextAppState: string) => {
+      if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        // App voltou para primeiro plano
+        console.log('App voltou para primeiro plano');
+        
+        if (isTracking) {
+          // Verificar se a tarefa de background ainda está ativa
+          const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+          if (!isTaskRegistered) {
+            console.log('Tarefa de background não registrada. Reiniciando...');
+            if (rondaId && uid) {
+              await startLocationTracking(rondaId, uid);
+            }
+          }
+        }
+      }
+      
+      setAppState(nextAppState);
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => subscription.remove();
+  }, [appState, isTracking, rondaId, uid, startLocationTracking]);
+
+  // Efeito inicial
+  useEffect(() => {
+    const initialize = async () => {
+      await registerBackgroundTasks();
+      await checkAndRequestPermissions();
+      await userData();
+      await verificarRondaAtiva();
+    };
+
+    initialize();
+
+    return () => {
+      // Limpeza
+      if (subscription) {
+        subscription.remove();
+      }
+    };
+  }, []);
+
+  // Tirar foto
   const takeImage = async () => {
-    let result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 1,
-    });
+    try {
+      let result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 1,
+      });
 
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
+      if (!result.canceled) {
+        setImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Erro ao tirar foto:', error);
+      Alert.alert('Erro', 'Não foi possível acessar a câmera.');
     }
   };
 
+  // Upload de imagem
   const uploadImage = async () => {
     if (!image) return null;
 
@@ -258,25 +377,18 @@ export default function HomeScreen() {
     }
   };
 
-  const userData = async () => {
-    let nome = await AsyncStorage.getItem('userName');
-    let userUid = await AsyncStorage.getItem('userUid');
-    setUser(nome);
-    setUid(userUid);
-  };
-
+  // Iniciar ronda
   const startTracking = async () => {
-    // Verifica permissões antes de iniciar
     const permissionsGranted = await checkAndRequestPermissions();
     if (!permissionsGranted) return;
 
-    // Verifica otimizações de bateria no Android
     const batteryOk = await checkBatteryOptimizations();
     if (!batteryOk) return;
 
     setShowKmModal('inicio');
   };
 
+  // Confirmar início da ronda
   const confirmStartTracking = async () => {
     if (!kmInicial || !placaInicial) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
@@ -293,7 +405,7 @@ export default function HomeScreen() {
       const rondaRef = doc(otherDb, 'rondas', novaRondaId);
       const userRef = doc(otherDb, 'usuarios', uid);
 
-      const imageUrl = await uploadImage(); // Upload da imagem
+      const imageUrl = await uploadImage();
 
       const rondaData = {
         nomeRonda: `Ronda_${new Date().toLocaleString()}`,
@@ -303,7 +415,7 @@ export default function HomeScreen() {
         ultimaLocalizacao: null,
         uid: uid,
         timestamp: new Date().toISOString(),
-        imagemInicial: imageUrl, // Adiciona a URL da imagem inicial
+        imagemInicial: imageUrl,
       };
 
       await setDoc(rondaRef, rondaData);
@@ -313,64 +425,24 @@ export default function HomeScreen() {
       setIsTracking(true);
       setShowKmModal(null);
       setCheckpoints([]);
-      setImage(null); // Limpa a imagem após o upload
+      setImage(null);
 
       await AsyncStorage.setItem('rondaId', novaRondaId);
 
-      const sub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 10000,
-          distanceInterval: 0,
-        },
-        async (loc) => {
-          setLocation(loc);
-          try {
-            await updateDoc(rondaRef, {
-              ultimaLocalizacao: {
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                timestamp: new Date().toISOString(),
-              },
-            });
-
-            await updateDoc(userRef, {
-              status_ronda: "Em Ronda",
-              ultimaLocalizacao: {
-                latitude: loc.coords.latitude,
-                longitude: loc.coords.longitude,
-                timestamp: new Date().toISOString(),
-              },
-            });
-          } catch (error) {
-            console.error('Erro ao atualizar localização:', error);
-          }
-        }
-      );
-
-      setSubscription(sub);
-
-      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 10000,
-        distanceInterval: 0,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: 'Rastreamento de Localização',
-          notificationBody: 'Seu aplicativo está rastreando sua localização.',
-          notificationColor: '#0000ff',
-        },
-      });
+      // Iniciar monitoramento de localização
+      await startLocationTracking(novaRondaId, uid);
     } catch (error) {
       console.error('Erro ao iniciar rastreamento:', error);
       Alert.alert('Erro', 'Não foi possível iniciar o rastreamento.');
     }
   };
 
+  // Parar ronda
   const stopTracking = async () => {
     setShowKmModal('fim');
   };
 
+  // Confirmar parada da ronda
   const confirmStopTracking = async () => {
     if (!kmFinal || !placaFinal) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem final e a placa do veículo.');
@@ -382,46 +454,46 @@ export default function HomeScreen() {
       return;
     }
 
-    if (subscription) {
-      subscription.remove();
-      setSubscription(null);
+    try {
+      if (subscription) {
+        subscription.remove();
+        setSubscription(null);
+      }
+
       setIsTracking(false);
 
       if (rondaId && uid) {
-        try {
-          const rondaRef = doc(otherDb, 'rondas', rondaId);
-          const userRef = doc(otherDb, 'usuarios', uid);
+        const rondaRef = doc(otherDb, 'rondas', rondaId);
+        const userRef = doc(otherDb, 'usuarios', uid);
 
-          const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
-          const imageUrl = await uploadImage(); // Upload da imagem
+        const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
+        const imageUrl = await uploadImage();
 
-          await Promise.all([
-            updateDoc(rondaRef, {
-              fim: new Date().toISOString(),
-              kmFinal: parseFloat(kmFinal),
-              placaFinal,
-              distanciaPercorrida,
-              imagemFinal: imageUrl, // Adiciona a URL da imagem final
-            }),
-            updateDoc(userRef, {
-              status_ronda: "Parado"
-            })
-          ]);
-
-          setRondaDetails((prev: any) => ({
-            ...prev,
+        await Promise.all([
+          updateDoc(rondaRef, {
             fim: new Date().toISOString(),
             kmFinal: parseFloat(kmFinal),
             placaFinal,
             distanciaPercorrida,
-            imagemFinal: imageUrl, // Adiciona a URL da imagem final
-          }));
-        } catch (error) {
-          console.error('Erro ao atualizar documentos:', error);
-          Alert.alert('Erro', 'Não foi possível atualizar o status da ronda.');
-        }
+            imagemFinal: imageUrl,
+          }),
+          updateDoc(userRef, {
+            status_ronda: "Parado"
+          }),
+          Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+        ]);
+
+        setRondaDetails((prev: any) => ({
+          ...prev,
+          fim: new Date().toISOString(),
+          kmFinal: parseFloat(kmFinal),
+          placaFinal,
+          distanciaPercorrida,
+          imagemFinal: imageUrl,
+        }));
       }
 
+      // Limpar estado
       setTimeout(() => {
         setRondaId(null);
         setRondaDetails(null);
@@ -431,16 +503,17 @@ export default function HomeScreen() {
         setPlacaFinal('');
         setShowKmModal(null);
         setCheckpoints([]);
-        setImage(null); // Limpa a imagem
+        setImage(null);
       }, 1000);
 
-      // Limpa o ID da ronda do AsyncStorage
       await AsyncStorage.removeItem('rondaId');
+    } catch (error) {
+      console.error('Erro ao parar rastreamento:', error);
+      Alert.alert('Erro', 'Não foi possível parar o rastreamento.');
     }
-
-    await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
   };
 
+  // Registrar checkpoint
   const handleCheckpoint = async () => {
     if (!rondaId || !location) {
       Alert.alert('Erro', 'Certifique-se de que o GPS está ativo.');
@@ -454,6 +527,7 @@ export default function HomeScreen() {
     }
   };
 
+  // Confirmar checkpoint
   const confirmCheckpoint = async () => {
     try {
       let imageUrl = null;
@@ -487,10 +561,12 @@ export default function HomeScreen() {
     }
   };
 
+  // Botão de pânico
   const handlePanicButton = () => {
     setShowPanicModal(true);
   };
 
+  // Confirmar checkpoint de pânico
   const confirmPanicCheckpoint = async () => {
     if (!rondaId || !location || !siteCode.trim() || !uf.trim()) {
       Alert.alert('Erro', 'Informe a sigla do site, a UF e certifique-se de que o GPS está ativo.');
@@ -622,7 +698,7 @@ export default function HomeScreen() {
                 styles.buttonCheckpoint
               ]}
               onPress={handleCheckpoint}
-              disabled={uploading}
+              disabled={uploading || !motivo}
             >
               <Text style={styles.buttonText}>Registrar Checkpoint</Text>
             </TouchableOpacity>
