@@ -1,7 +1,6 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import styles from '../../assets/styles/stylesIndex';
 
 interface CheckpointModalProps {
   visible: boolean;
@@ -33,7 +32,7 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
   return (
     <View style={styles.modalContainer}>
       <View style={styles.modalContent}>
-        <Text style={styles.modalTitle}>Registrar Checkpoint</Text>
+        <Text style={styles.modalTitle}>Registrar Ronda</Text>
 
         <TextInput
           style={styles.modalInput}
@@ -124,5 +123,86 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
     </View>
   );
 };
+
+// Estilos do componente
+const styles = StyleSheet.create({
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Fundo semi-transparente
+  },
+  modalContent: {
+    width: 300,
+    padding: 20,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  modalInput: {
+    height: 40,
+    borderColor: '#ccc',
+    borderWidth: 1,
+    borderRadius: 5,
+    padding: 10,
+    marginBottom: 10,
+  },
+  pickerContainerUF: {
+    borderColor: '#ccc',
+    borderWidth: 1,
+    borderRadius: 5,
+    marginBottom: 10,
+  },
+  ufPicker: {
+    height: 50,
+    width: '100%',
+  },
+  imageButton: {
+    backgroundColor: '#007BFF',
+    borderRadius: 5,
+    padding: 10,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  buttonText: {
+    color: '#fff',
+  },
+  imagePreview: {
+    width: '100%',
+    height: 150,
+    borderRadius: 5,
+    marginBottom: 10,
+  },
+  modalButtonContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+  },
+  modalButton: {
+    flex: 1,
+    marginHorizontal: 5,
+    padding: 10,
+    borderRadius: 5,
+  },
+  modalButtonCancel: {
+    backgroundColor: '#dc3545', // Cor de fundo para cancelar
+  },
+  modalButtonConfirm: {
+    backgroundColor: '#28a745', // Cor de fundo para confirmar
+  },
+  modalButtonText: {
+    color: '#fff',
+    textAlign: 'center',
+  },
+});
 
 export default CheckpointModal;

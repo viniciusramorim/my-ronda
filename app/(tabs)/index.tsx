@@ -1,4 +1,4 @@
-import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState } from 'react-native';
+import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, StyleSheet } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,7 +12,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { otherDb, storage } from '@/services/firebaseConfig';
 import { useRonda } from './_layout';
-import styles from '../../assets/styles/stylesIndex';
 import KmModal from '@/components/modals/KmModal';
 import PanicModal from '@/components/modals/PanicModal';
 import CheckpointModal from '@/components/modals/CheckpointModal';
@@ -46,11 +45,11 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
       try {
         const rondaId = await AsyncStorage.getItem('rondaId');
         const uid = await AsyncStorage.getItem('userUid');
-        
+
         if (rondaId && uid) {
           const rondaRef = doc(otherDb, 'rondas', rondaId);
           const userRef = doc(otherDb, 'usuarios', uid);
-          
+
           await Promise.all([
             updateDoc(rondaRef, {
               ultimaLocalizacao: {
@@ -80,7 +79,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   const now = Date.now();
   console.log(`Background fetch executado em: ${new Date(now).toISOString()}`);
-  
+
   // Verificar se há dados pendentes para sincronizar
   try {
     const pendingSync = await AsyncStorage.getItem('pendingSync');
@@ -92,7 +91,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   } catch (error) {
     console.error('Erro durante background fetch:', error);
   }
-  
+
   return BackgroundFetch.BackgroundFetchResult.NewData;
 });
 
@@ -243,7 +242,7 @@ export default function HomeScreen() {
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
+          timeInterval: 60000,
           distanceInterval: 0,
         },
         async (loc) => {
@@ -277,7 +276,7 @@ export default function HomeScreen() {
       // Iniciar serviço de background
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.High,
-        timeInterval: 5000,
+        timeInterval: 60000,
         distanceInterval: 0,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
@@ -299,7 +298,7 @@ export default function HomeScreen() {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
         // App voltou para primeiro plano
         console.log('App voltou para primeiro plano');
-        
+
         if (isTracking) {
           // Verificar se a tarefa de background ainda está ativa
           const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
@@ -311,7 +310,7 @@ export default function HomeScreen() {
           }
         }
       }
-      
+
       setAppState(nextAppState);
     };
 
@@ -605,9 +604,9 @@ export default function HomeScreen() {
   };
 
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.welcomeText}>Bem-vindo(a) {user}.</Text>
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContainer}>
+        <Text style={styles.welcomeText}>Bem-vindo(a), {user}.</Text>
 
         <TouchableOpacity
           style={[
@@ -618,10 +617,11 @@ export default function HomeScreen() {
           disabled={uploading}
         >
           <Text style={styles.buttonText}>
-            {isTracking ? 'Parar Ronda' : 'Iniciar Ronda'}
+            {isTracking ? 'Finalizar Atividade' : 'Iniciar Atividade'}
           </Text>
         </TouchableOpacity>
 
+        {/* KM Modal */}
         <Modal visible={showKmModal !== null} transparent={true} animationType="slide">
           <KmModal
             visible={showKmModal !== null}
@@ -641,6 +641,7 @@ export default function HomeScreen() {
           />
         </Modal>
 
+        {/* Panic Modal */}
         <Modal visible={showPanicModal} transparent={true} animationType="slide">
           <PanicModal
             visible={showPanicModal}
@@ -656,6 +657,7 @@ export default function HomeScreen() {
           />
         </Modal>
 
+        {/* Checkpoint Modal */}
         <Modal visible={showCheckpointModal} transparent={true} animationType="slide">
           <CheckpointModal
             visible={showCheckpointModal}
@@ -671,6 +673,7 @@ export default function HomeScreen() {
           />
         </Modal>
 
+        {/* Tracking Options */}
         {isTracking && (
           <>
             <View style={styles.pickerContainer}>
@@ -694,17 +697,18 @@ export default function HomeScreen() {
 
             <TouchableOpacity
               style={[
-                styles.button,
-                styles.buttonCheckpoint
+                styles.buttonCheckpoint,
+                !motivo ? styles.buttonDisabled : null // Adiciona a classe de estilo desabilitada, se necessário
               ]}
               onPress={handleCheckpoint}
-              disabled={uploading || !motivo}
+              disabled={uploading || !motivo} // Desabilita se não houver motivo selecionado
             >
-              <Text style={styles.buttonText}>Registrar Checkpoint</Text>
+              <Text style={styles.buttonText}>Registrar Ronda</Text>
             </TouchableOpacity>
           </>
         )}
 
+        {/* Ronda Details */}
         {isTracking && rondaDetails && (
           <View style={styles.detailsContainer}>
             <Text style={styles.detailsTitle}>Detalhes da Ronda</Text>
@@ -784,3 +788,121 @@ export default function HomeScreen() {
     </View>
   );
 }
+
+// Estilos aprimorados
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#2a003f', // Cor roxa/púrpura
+    paddingTop: 40, // Espaçamento do topo
+    paddingHorizontal: 20, // Espaçamento lateral
+  },
+  scrollContainer: {
+    paddingBottom: 100,
+  },
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    color: '#ffffff', // Cor do texto
+  },
+  button: {
+    borderRadius: 5,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  buttonStart: {
+    backgroundColor: '#28a745', // Cor verde para iniciar
+  },
+  buttonStop: {
+    backgroundColor: '#dc3545', // Cor vermelha para parar
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontSize: 18,
+  },
+  pickerContainer: {
+    borderColor: '#ccc',
+    borderWidth: 1,
+    borderRadius: 5,
+    marginBottom: 15,
+  },
+  picker: {
+    height: 60,
+    width: '100%',
+    color: '#ffffff',
+  },
+  detailsContainer: {
+    marginTop: 20,
+    padding: 10,
+    backgroundColor: '#ffffff',
+    borderRadius: 5,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+  },
+  detailsTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#333',
+  },
+  detailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 5,
+  },
+  detailLabel: {
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  detailValue: {
+    color: '#555',
+  },
+  checkpointsContainer: {
+    marginTop: 10,
+    padding: 10,
+    backgroundColor: '#eef',
+    borderRadius: 5,
+  },
+  checkpointsTitle: {
+    fontWeight: 'bold',
+    color: '#007BFF',
+  },
+  checkpointItem: {
+    padding: 5,
+    borderBottomWidth: 1,
+    borderColor: '#ddd',
+  },
+  checkpointSite: {
+    fontWeight: 'bold',
+  },
+  checkpointMotivo: {
+    color: '#555',
+  },
+  checkpointTime: {
+    fontSize: 12,
+    color: '#777',
+  },
+  panicButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: '#dc3545', // Cor de alerta para o botão de pânico
+    borderRadius: 50,
+    padding: 15,
+    elevation: 5,
+  },
+  buttonCheckpoint: {
+    backgroundColor: '#007BFF', // Cor azul para checkpoints
+    borderRadius: 5,
+    paddingVertical: 15,
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  buttonDisabled: {
+    backgroundColor: 'rgba(170, 170, 170, 0.5)', // Cor cinza mais transparente
+  },
+});
