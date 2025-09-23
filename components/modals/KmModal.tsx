@@ -28,6 +28,69 @@ const KmModal: React.FC<KmModalProps> = ({
   onConfirm,
   uploading,
 }) => {
+  // Função para aplicar a máscara da placa
+  const handlePlacaChange = (text: string) => {
+    // Remove tudo que não é letra ou número e converte para maiúsculo
+    let cleaned = text.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    
+    // Aplica a máscara AAA-0000
+    if (cleaned.length > 3) {
+      cleaned = cleaned.substring(0, 3) + '-' + cleaned.substring(3, 7);
+    }
+    
+    // Limita o tamanho total (3 letras + 1 hífen + 4 números = 8 caracteres)
+    if (cleaned.length > 8) {
+      cleaned = cleaned.substring(0, 8);
+    }
+    
+    onPlacaChange(cleaned);
+  };
+
+  // Função para aplicar a máscara do KM (100.000)
+  const handleKmChange = (text: string) => {
+    // Remove tudo que não é número, exceto ponto
+    let cleaned = text.replace(/[^\d.]/g, '');
+    
+    // Remove pontos extras, mantendo apenas o último
+    const parts = cleaned.split('.');
+    if (parts.length > 2) {
+      cleaned = parts[0] + '.' + parts.slice(1).join('');
+    }
+    
+    // Limita para apenas 1 ponto decimal
+    if ((cleaned.match(/\./g) || []).length > 1) {
+      cleaned = cleaned.replace(/\.+$/, '');
+    }
+    
+    // Limita a 6 números antes do ponto e 3 depois (formato: 999999.999)
+    const numberParts = cleaned.split('.');
+    if (numberParts[0].length > 6) {
+      numberParts[0] = numberParts[0].substring(0, 6);
+    }
+    if (numberParts[1] && numberParts[1].length > 3) {
+      numberParts[1] = numberParts[1].substring(0, 3);
+    }
+    
+    cleaned = numberParts.join('.');
+    
+    onKmChange(cleaned);
+  };
+
+  // Função para formatar o valor do KM para exibição (adiciona separadores de milhar)
+  const formatKmDisplay = (value: string) => {
+    if (!value) return value;
+    
+    const parts = value.split('.');
+    let integerPart = parts[0];
+    
+    // Adiciona separadores de milhar
+    if (integerPart.length > 3) {
+      integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+    
+    return parts[1] ? integerPart + ',' + parts[1] : integerPart;
+  };
+
   if (!visible || !type) return null;
 
   return (
@@ -39,21 +102,23 @@ const KmModal: React.FC<KmModalProps> = ({
 
         <TextInput
           style={styles.modalInput}
-          placeholder={`Digite o KM ${type === 'inicio' ? 'inicial' : 'final'}`}
+          placeholder={`Digite o KM ${type === 'inicio' ? 'inicial' : 'final'} (ex: 100.000)`}
           placeholderTextColor="#999"
-          keyboardType="numeric"
-          value={kmValue}
-          onChangeText={onKmChange}
+          keyboardType="decimal-pad"
+          value={formatKmDisplay(kmValue)}
+          onChangeText={handleKmChange}
           editable={!uploading}
         />
 
         <TextInput
           style={styles.modalInput}
-          placeholder="Placa do Veículo"
+          placeholder="Placa do Veículo (AAA-0000)"
           placeholderTextColor="#999"
           value={placaValue}
-          onChangeText={onPlacaChange}
+          onChangeText={handlePlacaChange}
           editable={!uploading}
+          maxLength={8}
+          autoCapitalize="characters"
         />
 
         <TouchableOpacity
@@ -99,13 +164,13 @@ const KmModal: React.FC<KmModalProps> = ({
   );
 };
 
-// Estilos do componente
+// Estilos do componente (mantidos os mesmos)
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Fundo semi-transparente
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
     width: 300,
@@ -159,10 +224,10 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   modalButtonCancel: {
-    backgroundColor: '#dc3545', // Cor de fundo para cancelar
+    backgroundColor: '#dc3545',
   },
   modalButtonConfirm: {
-    backgroundColor: '#28a745', // Cor de fundo para confirmar
+    backgroundColor: '#28a745',
   },
   modalButtonText: {
     color: '#fff',

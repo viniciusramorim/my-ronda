@@ -105,6 +105,7 @@ export default function HomeScreen() {
   const [user, setUser] = useState<string | null>('');
   const [uid, setUid] = useState<string | null>(null);
   const [image, setImage] = useState<string | null>(null);
+  const [comment, setComment] = useState('');
   const [uploading, setUploading] = useState(false);
   const [kmInicial, setKmInicial] = useState<string>('');
   const [kmFinal, setKmFinal] = useState<string>('');
@@ -242,7 +243,7 @@ export default function HomeScreen() {
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 60000,
+          timeInterval: 600000,
           distanceInterval: 0,
         },
         async (loc) => {
@@ -276,7 +277,7 @@ export default function HomeScreen() {
       // Iniciar serviço de background
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.High,
-        timeInterval: 60000,
+        timeInterval: 600000,
         distanceInterval: 0,
         showsBackgroundLocationIndicator: true,
         foregroundService: {
@@ -540,6 +541,7 @@ export default function HomeScreen() {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         timestamp: new Date().toISOString(),
+        comentario: comment,
         ...(imageUrl && { imageUrl }),
       };
 
@@ -553,6 +555,7 @@ export default function HomeScreen() {
       setUf('');
       setMotivo('');
       setImage(null);
+      setComment('')
       setShowCheckpointModal(false);
     } catch (error) {
       console.error('Erro ao adicionar checkpoint:', error);
@@ -665,6 +668,8 @@ export default function HomeScreen() {
             onSiteCodeChange={setSiteCode}
             uf={uf}
             onUfChange={setUf}
+            comment={comment}
+            onCommentChange={setComment}
             image={image}
             onTakeImage={takeImage}
             onCancel={() => setShowCheckpointModal(false)}
@@ -691,7 +696,6 @@ export default function HomeScreen() {
                 <Picker.Item label="Ronda em site" value="ronda_em_site" color="#000" />
                 <Picker.Item label="Abastecimento" value="abastecimento" color="#000" />
                 <Picker.Item label="Troca de veículo" value="troca_de_veiculo" color="#000" />
-                <Picker.Item label="Outros" value="outros" color="#000" />
               </Picker>
             </View>
 

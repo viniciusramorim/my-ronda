@@ -33,11 +33,17 @@ const PanicModal: React.FC<PanicModalProps> = ({
 }) => {
   if (!visible) return null;
 
-  // Função para aplicar máscara na sigla (ex: SP1)
+  // Função para aplicar máscara na sigla (3 caracteres maiúsculos, letras e números)
   const handleSiteCodeChange = (text: string) => {
-    // Remove caracteres não alfanuméricos e limita para 4 caracteres
-    const maskedText = text.replace(/[^A-Z0-9]/gi, '').substring(0, 3);
-    onSiteCodeChange(maskedText);
+    // Remove caracteres especiais, mantém apenas letras e números
+    let cleaned = text.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+
+    // Limita a 3 caracteres
+    if (cleaned.length > 3) {
+      cleaned = cleaned.substring(0, 3);
+    }
+
+    onSiteCodeChange(cleaned);
   };
 
   return (
@@ -47,11 +53,13 @@ const PanicModal: React.FC<PanicModalProps> = ({
 
         <TextInput
           style={styles.modalInput}
-          placeholder="Sigla (ex: SP1)"
+          placeholder="Sigla (ex: SP1) - Máx. 3 caracteres"
           placeholderTextColor="#999"
           value={siteCode}
-          onChangeText={handleSiteCodeChange} // Aplicando a função de máscara
+          onChangeText={handleSiteCodeChange}
           editable={!uploading}
+          maxLength={3}
+          autoCapitalize="characters"
         />
 
         <View style={styles.pickerContainerUF}>
@@ -61,16 +69,47 @@ const PanicModal: React.FC<PanicModalProps> = ({
             style={styles.ufPicker}
             enabled={!uploading}
           >
-            {/* Opções do Picker */}
             <Picker.Item label="UF" value="" color="#999" />
             <Picker.Item label="AC" value="AC" />
             <Picker.Item label="AL" value="AL" />
-            {/* ...outras opções... */}
+            <Picker.Item label="AP" value="AP" />
+            <Picker.Item label="AM" value="AM" />
+            <Picker.Item label="BA" value="BA" />
+            <Picker.Item label="CE" value="CE" />
+            <Picker.Item label="DF" value="DF" />
+            <Picker.Item label="ES" value="ES" />
+            <Picker.Item label="GO" value="GO" />
+            <Picker.Item label="MA" value="MA" />
+            <Picker.Item label="MT" value="MT" />
+            <Picker.Item label="MS" value="MS" />
+            <Picker.Item label="MG" value="MG" />
+            <Picker.Item label="PA" value="PA" />
+            <Picker.Item label="PB" value="PB" />
+            <Picker.Item label="PR" value="PR" />
+            <Picker.Item label="PE" value="PE" />
+            <Picker.Item label="PI" value="PI" />
+            <Picker.Item label="RJ" value="RJ" />
+            <Picker.Item label="RN" value="RN" />
+            <Picker.Item label="RS" value="RS" />
+            <Picker.Item label="RO" value="RO" />
+            <Picker.Item label="RR" value="RR" />
+            <Picker.Item label="SC" value="SC" />
             <Picker.Item label="SP" value="SP" />
             <Picker.Item label="SE" value="SE" />
             <Picker.Item label="TO" value="TO" />
           </Picker>
         </View>
+
+        <TextInput
+          style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]}
+          placeholder="Adicionar Comentário..."
+          placeholderTextColor="#999"
+          value={comment}
+          onChangeText={onCommentChange}
+          editable={!uploading}
+          multiline={true}
+          numberOfLines={4}
+        />
 
         <TouchableOpacity
           style={styles.imageButton}
@@ -88,15 +127,6 @@ const PanicModal: React.FC<PanicModalProps> = ({
             style={styles.imagePreview}
           />
         )}
-
-        <TextInput
-          style={[styles.modalInput, { marginTop: 10 }]}
-          placeholder="Adicionar Comentário..."
-          placeholderTextColor="#999"
-          value={comment}
-          onChangeText={onCommentChange} // Comentário sem máscara
-          editable={!uploading}
-        />
 
         {uploading && (
           <ActivityIndicator size="large" color="#0000ff" style={{ marginTop: 10 }} />
@@ -130,7 +160,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)', // Fundo semi-transparente
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   modalContent: {
     width: 300,
@@ -194,10 +224,10 @@ const styles = StyleSheet.create({
     borderRadius: 5,
   },
   modalButtonCancel: {
-    backgroundColor: '#dc3545', // Cor de fundo para cancelar
+    backgroundColor: '#dc3545',
   },
   modalButtonConfirm: {
-    backgroundColor: '#28a745', // Cor de fundo para confirmar
+    backgroundColor: '#28a745',
   },
   modalButtonText: {
     color: '#fff',
