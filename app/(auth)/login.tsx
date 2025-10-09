@@ -92,6 +92,8 @@ export default function LoginScreen() {
           {loading ? 'Entrando...' : 'Entrar'}
         </Text>
       </TouchableOpacity>
+
+      <Text style={styles.version}>1.0.0.091025</Text>
     </View>
   );
 }
@@ -119,6 +121,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#ccc',
     marginBottom: 28,
+  },
+  version: {
+    fontSize: 16,
+    color: '#575c63',
+    marginTop: 28,
   },
   input: {
     width: '100%',
