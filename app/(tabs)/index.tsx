@@ -26,6 +26,24 @@ interface Checkpoint {
   imageUrl?: string;
 }
 
+interface RotaPreDefinida {
+  id: string;
+  nome: string;
+  pontos: PontoColeta[];
+  ativa: boolean;
+}
+
+interface PontoColeta {
+  id: string;
+  sigla: string;
+  uf: string;
+  descricao: string;
+  ordem: number;
+  concluido: boolean;
+  timestamp?: string;
+  imageUrl?: string;
+}
+
 // Definição da tarefa de localização em background
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
@@ -119,6 +137,13 @@ export default function HomeScreen() {
   const [showCheckpointModal, setShowCheckpointModal] = useState(false);
   const [appState, setAppState] = useState(AppState.currentState);
 
+  // Novos estados para rota pré-definida
+  const [rotasPreDefinidas, setRotasPreDefinidas] = useState<RotaPreDefinida[]>([]);
+  const [rotaAtiva, setRotaAtiva] = useState<RotaPreDefinida | null>(null);
+  const [proximoPonto, setProximoPonto] = useState<PontoColeta | null>(null);
+  const [mostrarSelecaoRota, setMostrarSelecaoRota] = useState(false);
+  const [modoRota, setModoRota] = useState<'livre' | 'predefinida' | null>(null);
+
   // Registrar tarefas de background
   const registerBackgroundTasks = useCallback(async () => {
     try {
@@ -208,31 +233,150 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // Verificar ronda ativa
+  // Carregar rotas pré-definidas
+  const carregarRotasPreDefinidas = useCallback(async () => {
+    try {
+      // Aqui você pode carregar de um arquivo local, API ou Firebase
+      const rotasExemplo: RotaPreDefinida[] = [
+        {
+          id: 'rota_1',
+          nome: 'Rota Norte',
+          ativa: true,
+          pontos: [
+            { id: 'p1', sigla: 'STA', uf: 'SP', descricao: 'Site Torre A', ordem: 1, concluido: false },
+            { id: 'p2', sigla: 'STB', uf: 'SP', descricao: 'Site Torre B', ordem: 2, concluido: false },
+            { id: 'p3', sigla: 'MTC', uf: 'MG', descricao: 'Mini Torre C', ordem: 3, concluido: false },
+            { id: 'p4', sigla: 'CTD', uf: 'RJ', descricao: 'Centro Distribuição D', ordem: 4, concluido: false },
+          ]
+        },
+        {
+          id: 'rota_2',
+          nome: 'Rota Sul',
+          ativa: true,
+          pontos: [
+            { id: 'p5', sigla: 'STE', uf: 'PR', descricao: 'Site Torre E', ordem: 1, concluido: false },
+            { id: 'p6', sigla: 'MTF', uf: 'SC', descricao: 'Mini Torre F', ordem: 2, concluido: false },
+            { id: 'p7', sigla: 'CTG', uf: 'RS', descricao: 'Centro Distribuição G', ordem: 3, concluido: false },
+          ]
+        }
+      ];
+      
+      setRotasPreDefinidas(rotasExemplo);
+      return rotasExemplo;
+    } catch (error) {
+      console.error('Erro ao carregar rotas pré-definidas:', error);
+      return [];
+    }
+  }, []);
+
+  // Carregar checkpoints da ronda
+  const carregarCheckpoints = useCallback(async (rondaId: string) => {
+    try {
+      // Aqui você carregaria os checkpoints do Firebase
+      // Por enquanto, vamos apenas limpar os checkpoints locais
+      setCheckpoints([]);
+    } catch (error) {
+      console.error('Erro ao carregar checkpoints:', error);
+    }
+  }, []);
+
+  // Verificar ronda ativa - FUNÇÃO ATUALIZADA
   const verificarRondaAtiva = useCallback(async () => {
     try {
       const rondaSalva = await AsyncStorage.getItem('rondaId');
       const userUid = await AsyncStorage.getItem('userUid');
+      const rotaAtivaSalva = await AsyncStorage.getItem('rotaAtiva');
+      const modoRotaSalvo = await AsyncStorage.getItem('modoRota');
 
       if (rondaSalva && userUid) {
         setRondaId(rondaSalva);
         setUid(userUid);
         setIsTracking(true);
 
-        // Recuperar detalhes da ronda
+        // Recuperar detalhes da ronda do Firebase
         const rondaRef = doc(otherDb, 'rondas', rondaSalva);
         const rondaDoc = await getDoc(rondaRef);
+        
         if (rondaDoc.exists()) {
-          setRondaDetails(rondaDoc.data());
+          const data = rondaDoc.data();
+          setRondaDetails(data);
+          
+          // Restaurar modo da rota
+          if (modoRotaSalvo) {
+            setModoRota(modoRotaSalvo as 'livre' | 'predefinida');
+          } else if (data.modoRota) {
+            setModoRota(data.modoRota);
+          }
+
+          // Restaurar rota ativa se existir
+          if (rotaAtivaSalva && modoRotaSalvo === 'predefinida') {
+            try {
+              const rotaParseada = JSON.parse(rotaAtivaSalva);
+              setRotaAtiva(rotaParseada);
+              
+              // Encontrar próximo ponto não concluído
+              const proximo = rotaParseada.pontos.find((p: PontoColeta) => !p.concluido);
+              setProximoPonto(proximo || null);
+              
+              console.log('Rota pré-definida recuperada:', rotaParseada.nome);
+            } catch (error) {
+              console.error('Erro ao parsear rota ativa:', error);
+            }
+          } else if (data.rotaPreDefinida && modoRotaSalvo === 'predefinida') {
+            // Tentar recuperar do Firebase se não tiver no AsyncStorage
+            const rotas = await carregarRotasPreDefinidas();
+            const rota = rotas.find(r => r.id === data.rotaPreDefinida.id);
+            if (rota) {
+              setRotaAtiva(rota);
+              // Encontrar próximo ponto não concluído baseado nos checkpoints
+              const proximo = rota.pontos.find(p => !p.concluido);
+              setProximoPonto(proximo || null);
+            }
+          }
+
+          // Carregar checkpoints
+          await carregarCheckpoints(rondaSalva);
         }
 
         // Iniciar monitoramento de localização
         await startLocationTracking(rondaSalva, userUid);
+
+        console.log('Ronda recuperada - Modo:', modoRotaSalvo || data?.modoRota);
       }
     } catch (error) {
       console.error('Erro ao verificar ronda ativa:', error);
     }
+  }, [carregarRotasPreDefinidas, carregarCheckpoints]);
+
+  // Salvar estado da rota no AsyncStorage - NOVA FUNÇÃO
+  const salvarEstadoRota = useCallback(async () => {
+    try {
+      if (rotaAtiva) {
+        await AsyncStorage.setItem('rotaAtiva', JSON.stringify(rotaAtiva));
+      }
+      if (modoRota) {
+        await AsyncStorage.setItem('modoRota', modoRota);
+      }
+    } catch (error) {
+      console.error('Erro ao salvar estado da rota:', error);
+    }
+  }, [rotaAtiva, modoRota]);
+
+  // Limpar estado da rota do AsyncStorage - NOVA FUNÇÃO
+  const limparEstadoRota = useCallback(async () => {
+    try {
+      await AsyncStorage.multiRemove(['rotaAtiva', 'modoRota']);
+    } catch (error) {
+      console.error('Erro ao limpar estado da rota:', error);
+    }
   }, []);
+
+  // Efeito para salvar estado da rota quando mudar
+  useEffect(() => {
+    if (isTracking && (rotaAtiva || modoRota)) {
+      salvarEstadoRota();
+    }
+  }, [rotaAtiva, modoRota, isTracking, salvarEstadoRota]);
 
   // Iniciar monitoramento de localização
   const startLocationTracking = useCallback(async (rondaId: string, userId: string) => {
@@ -325,6 +469,7 @@ export default function HomeScreen() {
       await registerBackgroundTasks();
       await checkAndRequestPermissions();
       await userData();
+      await carregarRotasPreDefinidas();
       await verificarRondaAtiva();
     };
 
@@ -385,10 +530,68 @@ export default function HomeScreen() {
     const batteryOk = await checkBatteryOptimizations();
     if (!batteryOk) return;
 
+    // Mostrar modal de seleção de modo de rota
+    setMostrarSelecaoRota(true);
+  };
+
+  // Selecionar modo de rota
+  const selecionarModoRota = (modo: 'livre' | 'predefinida') => {
+    setModoRota(modo);
+    
+    if (modo === 'predefinida') {
+      // Manter o modal aberto para seleção da rota específica
+      setMostrarSelecaoRota(true);
+    } else {
+      // Modo livre - ir direto para dados do veículo
+      setMostrarSelecaoRota(false);
+      setShowKmModal('inicio');
+    }
+  };
+
+  // Confirmar rota selecionada
+  const confirmarRotaSelecionada = (rota: RotaPreDefinida) => {
+    setRotaAtiva(rota);
+    setProximoPonto(rota.pontos[0]); // Primeiro ponto da rota
+    setMostrarSelecaoRota(false);
     setShowKmModal('inicio');
   };
 
-  // Confirmar início da ronda
+  // Avançar para próximo ponto
+  const avancarParaProximoPonto = async () => {
+    if (!rotaAtiva || !proximoPonto) return;
+
+    try {
+      // Marcar ponto atual como concluído
+      const pontosAtualizados = rotaAtiva.pontos.map(ponto => 
+        ponto.id === proximoPonto.id 
+          ? { ...ponto, concluido: true, timestamp: new Date().toISOString() }
+          : ponto
+      );
+
+      const rotaAtualizada = {
+        ...rotaAtiva,
+        pontos: pontosAtualizados
+      };
+
+      setRotaAtiva(rotaAtualizada);
+
+      // Encontrar próximo ponto não concluído
+      const proximo = pontosAtualizados.find(p => !p.concluido);
+      
+      if (proximo) {
+        setProximoPonto(proximo);
+        Alert.alert('Próximo Ponto', `Siga para: ${proximo.sigla}-${proximo.uf} - ${proximo.descricao}`);
+      } else {
+        // Rota concluída
+        setProximoPonto(null);
+        Alert.alert('Rota Concluída', 'Todos os pontos da rota foram visitados!');
+      }
+    } catch (error) {
+      console.error('Erro ao avançar para próximo ponto:', error);
+    }
+  };
+
+  // Confirmar início da ronda - ATUALIZADA
   const confirmStartTracking = async () => {
     if (!kmInicial || !placaInicial) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
@@ -416,6 +619,14 @@ export default function HomeScreen() {
         uid: uid,
         timestamp: new Date().toISOString(),
         imagemInicial: imageUrl,
+        modoRota: modoRota,
+        ...(rotaAtiva && {
+          rotaPreDefinida: {
+            id: rotaAtiva.id,
+            nome: rotaAtiva.nome,
+            pontosTotais: rotaAtiva.pontos.length
+          }
+        }),
       };
 
       await setDoc(rondaRef, rondaData);
@@ -428,9 +639,20 @@ export default function HomeScreen() {
       setImage(null);
 
       await AsyncStorage.setItem('rondaId', novaRondaId);
+      await salvarEstadoRota(); // Salvar estado da rota
 
       // Iniciar monitoramento de localização
       await startLocationTracking(novaRondaId, uid);
+
+      // Mostrar mensagem conforme o modo
+      if (modoRota === 'predefinida' && rotaAtiva && proximoPonto) {
+        Alert.alert(
+          'Rota Iniciada', 
+          `Rota "${rotaAtiva.nome}" iniciada. Primeiro ponto: ${proximoPonto.sigla}-${proximoPonto.uf}`
+        );
+      } else {
+        Alert.alert('Ronda Iniciada', 'Modo de rota livre ativado. Você pode registrar checkpoints livremente.');
+      }
     } catch (error) {
       console.error('Erro ao iniciar rastreamento:', error);
       Alert.alert('Erro', 'Não foi possível iniciar o rastreamento.');
@@ -442,7 +664,7 @@ export default function HomeScreen() {
     setShowKmModal('fim');
   };
 
-  // Confirmar parada da ronda
+  // Confirmar parada da ronda - ATUALIZADA
   const confirmStopTracking = async () => {
     if (!kmFinal || !placaFinal) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem final e a placa do veículo.');
@@ -469,6 +691,8 @@ export default function HomeScreen() {
         const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
         const imageUrl = await uploadImage();
 
+        const pontosConcluidos = rotaAtiva ? rotaAtiva.pontos.filter(p => p.concluido).length : 0;
+
         await Promise.all([
           updateDoc(rondaRef, {
             fim: new Date().toISOString(),
@@ -476,6 +700,14 @@ export default function HomeScreen() {
             placaFinal,
             distanciaPercorrida,
             imagemFinal: imageUrl,
+            ...(rotaAtiva && {
+              rotaPreDefinida: {
+                id: rotaAtiva.id,
+                nome: rotaAtiva.nome,
+                pontosTotais: rotaAtiva.pontos.length,
+                pontosConcluidos: pontosConcluidos
+              }
+            })
           }),
           updateDoc(userRef, {
             status_ronda: "Parado"
@@ -504,9 +736,13 @@ export default function HomeScreen() {
         setShowKmModal(null);
         setCheckpoints([]);
         setImage(null);
+        setRotaAtiva(null);
+        setProximoPonto(null);
+        setModoRota(null);
       }, 1000);
 
       await AsyncStorage.removeItem('rondaId');
+      await limparEstadoRota(); // Limpar estado da rota
     } catch (error) {
       console.error('Erro ao parar rastreamento:', error);
       Alert.alert('Erro', 'Não foi possível parar o rastreamento.');
@@ -520,24 +756,37 @@ export default function HomeScreen() {
       return;
     }
 
-    if (motivo === 'ronda_em_site') {
+    if (proximoPonto) {
+      // Usar dados do ponto da rota ativa
+      setSiteCode(proximoPonto.sigla);
+      setUf(proximoPonto.uf);
+      setMotivo('ronda_em_site');
       setShowCheckpointModal(true);
     } else {
-      confirmCheckpoint();
+      // Comportamento normal quando não há rota ativa (modo livre)
+      if (motivo === 'ronda_em_site') {
+        setShowCheckpointModal(true);
+      } else {
+        confirmCheckpoint();
+      }
     }
   };
 
-  // Confirmar checkpoint
+  // Confirmar checkpoint - ATUALIZADA
   const confirmCheckpoint = async () => {
     try {
       let imageUrl = null;
-      if (motivo === 'ronda_em_site' && image) {
+      if ((motivo === 'ronda_em_site' || proximoPonto) && image) {
         imageUrl = await uploadImage();
       }
 
+      const site = proximoPonto 
+        ? `${proximoPonto.sigla}-${proximoPonto.uf}`
+        : `${siteCode.toUpperCase()}-${uf}`;
+
       const checkpointData = {
-        site: `${siteCode.toUpperCase()}-${uf}`,
-        motivo,
+        site,
+        motivo: proximoPonto ? 'ronda_em_site' : motivo,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         timestamp: new Date().toISOString(),
@@ -550,12 +799,18 @@ export default function HomeScreen() {
 
       setCheckpoints(prev => [...prev, checkpointData]);
 
-      Alert.alert('Checkpoint adicionado', `Site ${siteCode.toUpperCase()} salvo com sucesso.`);
+      // Avançar para próximo ponto se estiver em uma rota pré-definida
+      if (proximoPonto) {
+        await avancarParaProximoPonto();
+        await salvarEstadoRota(); // Salvar estado atualizado da rota
+      }
+
+      Alert.alert('Checkpoint adicionado', `Site ${site} salvo com sucesso.`);
       setSiteCode('');
       setUf('');
       setMotivo('');
       setImage(null);
-      setComment('')
+      setComment('');
       setShowCheckpointModal(false);
     } catch (error) {
       console.error('Erro ao adicionar checkpoint:', error);
@@ -624,6 +879,77 @@ export default function HomeScreen() {
           </Text>
         </TouchableOpacity>
 
+        {/* Modal de Seleção de Modo de Rota */}
+        <Modal visible={mostrarSelecaoRota} transparent={true} animationType="slide">
+          <View style={styles.modalContainer}>
+            <View style={styles.modalContent}>
+              {!modoRota ? (
+                // Seleção inicial do modo
+                <>
+                  <Text style={styles.modalTitle}>Selecione o Modo de Ronda</Text>
+                  
+                  <TouchableOpacity
+                    style={styles.modoRotaButton}
+                    onPress={() => selecionarModoRota('livre')}
+                  >
+                    <MaterialCommunityIcons name="map-marker-radius" size={40} color="#007BFF" />
+                    <Text style={styles.modoRotaTitle}>Rota Livre</Text>
+                    <Text style={styles.modoRotaDescricao}>
+                      Registre checkpoints livremente sem uma rota pré-definida
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.modoRotaButton}
+                    onPress={() => selecionarModoRota('predefinida')}
+                  >
+                    <MaterialCommunityIcons name="map-marker-path" size={40} color="#28a745" />
+                    <Text style={styles.modoRotaTitle}>Rota Pré-definida</Text>
+                    <Text style={styles.modoRotaDescricao}>
+                      Siga uma rota com pontos pré-definidos em sequência
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.buttonCancel}
+                    onPress={() => setMostrarSelecaoRota(false)}
+                  >
+                    <Text style={styles.buttonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                // Seleção de rota específica (apenas para modo pré-definido)
+                <>
+                  <Text style={styles.modalTitle}>Selecionar Rota Pré-Definida</Text>
+                  <ScrollView style={styles.rotasList}>
+                    {rotasPreDefinidas.map(rota => (
+                      <TouchableOpacity
+                        key={rota.id}
+                        style={styles.rotaItem}
+                        onPress={() => confirmarRotaSelecionada(rota)}
+                      >
+                        <Text style={styles.rotaNome}>{rota.nome}</Text>
+                        <Text style={styles.rotaPontos}>
+                          {rota.pontos.length} pontos • {rota.pontos.map(p => `${p.sigla}-${p.uf}`).join(' → ')}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                  <TouchableOpacity
+                    style={styles.buttonCancel}
+                    onPress={() => {
+                      setModoRota(null);
+                      setMostrarSelecaoRota(false);
+                    }}
+                  >
+                    <Text style={styles.buttonText}>Voltar</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          </View>
+        </Modal>
+
         {/* KM Modal */}
         <Modal visible={showKmModal !== null} transparent={true} animationType="slide">
           <KmModal
@@ -638,6 +964,9 @@ export default function HomeScreen() {
             onCancel={() => {
               setShowKmModal(null);
               setImage(null);
+              setRotaAtiva(null);
+              setProximoPonto(null);
+              setModoRota(null);
             }}
             onConfirm={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
             uploading={uploading}
@@ -681,6 +1010,17 @@ export default function HomeScreen() {
         {/* Tracking Options */}
         {isTracking && (
           <>
+            <View style={styles.modoInfoContainer}>
+              <Text style={styles.modoInfoText}>
+                Modo: {modoRota === 'predefinida' ? 'Rota Pré-definida' : 'Rota Livre'}
+              </Text>
+              {rotaAtiva && (
+                <Text style={styles.rotaAtivaText}>
+                  Rota: {rotaAtiva.nome}
+                </Text>
+              )}
+            </View>
+
             <View style={styles.pickerContainer}>
               <Picker
                 selectedValue={motivo}
@@ -690,26 +1030,111 @@ export default function HomeScreen() {
                 }}
                 dropdownIconColor="#fff"
                 style={styles.picker}
-                enabled={!uploading}
+                enabled={!uploading && !proximoPonto}
               >
                 <Picker.Item label="Selecione o motivo" value="" color="#999" />
                 <Picker.Item label="Ronda em site" value="ronda_em_site" color="#000" />
                 <Picker.Item label="Abastecimento" value="abastecimento" color="#000" />
                 <Picker.Item label="Troca de veículo" value="troca_de_veiculo" color="#000" />
+                <Picker.Item label="Outro" value="outro" color="#000" />
               </Picker>
             </View>
 
             <TouchableOpacity
               style={[
                 styles.buttonCheckpoint,
-                !motivo ? styles.buttonDisabled : null // Adiciona a classe de estilo desabilitada, se necessário
+                (!motivo && !proximoPonto) ? styles.buttonDisabled : null
               ]}
               onPress={handleCheckpoint}
-              disabled={uploading || !motivo} // Desabilita se não houver motivo selecionado
+              disabled={uploading || (!motivo && !proximoPonto)}
             >
-              <Text style={styles.buttonText}>Registrar Ronda</Text>
+              <Text style={styles.buttonText}>
+                {proximoPonto 
+                  ? `Registrar ${proximoPonto.sigla}-${proximoPonto.uf}`
+                  : motivo === 'ronda_em_site' 
+                    ? 'Registrar Site' 
+                    : 'Registrar Checkpoint'
+                }
+              </Text>
             </TouchableOpacity>
           </>
+        )}
+
+        {/* Progresso da Rota (apenas para modo pré-definido) */}
+        {isTracking && rotaAtiva && (
+          <View style={styles.rotaContainer}>
+            <Text style={styles.rotaTitle}>Rota: {rotaAtiva.nome}</Text>
+            
+            <View style={styles.progressContainer}>
+              <Text style={styles.progressText}>
+                Progresso: {rotaAtiva.pontos.filter(p => p.concluido).length} / {rotaAtiva.pontos.length}
+              </Text>
+              <View style={styles.progressBar}>
+                <View 
+                  style={[
+                    styles.progressFill,
+                    { 
+                      width: `${(rotaAtiva.pontos.filter(p => p.concluido).length / rotaAtiva.pontos.length) * 100}%` 
+                    }
+                  ]} 
+                />
+              </View>
+            </View>
+
+            {proximoPonto && (
+              <View style={styles.proximoPontoContainer}>
+                <Text style={styles.proximoPontoTitle}>Próximo Ponto:</Text>
+                <Text style={styles.proximoPonto}>
+                  {proximoPonto.sigla}-{proximoPonto.uf} - {proximoPonto.descricao}
+                </Text>
+              </View>
+            )}
+
+            <ScrollView style={styles.pontosList}>
+              {rotaAtiva.pontos.map(ponto => (
+                <View key={ponto.id} style={[
+                  styles.pontoItem,
+                  ponto.concluido && styles.pontoConcluido
+                ]}>
+                  <MaterialCommunityIcons 
+                    name={ponto.concluido ? "check-circle" : "map-marker"} 
+                    size={20} 
+                    color={ponto.concluido ? "#28a745" : "#007BFF"} 
+                  />
+                  <Text style={styles.pontoText}>
+                    {ponto.sigla}-{ponto.uf} - {ponto.descricao}
+                  </Text>
+                  {ponto.timestamp && (
+                    <Text style={styles.pontoTime}>
+                      {new Date(ponto.timestamp).toLocaleTimeString()}
+                    </Text>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Informações do modo livre */}
+        {isTracking && modoRota === 'livre' && !rotaAtiva && (
+          <View style={styles.rotaLivreContainer}>
+            <Text style={styles.rotaLivreTitle}>Modo Rota Livre</Text>
+            <Text style={styles.rotaLivreDescricao}>
+              Você está no modo de rota livre. Registre checkpoints conforme necessário selecionando o motivo acima.
+            </Text>
+            <View style={styles.statsContainer}>
+              <View style={styles.statItem}>
+                <Text style={styles.statNumber}>{checkpoints.length}</Text>
+                <Text style={styles.statLabel}>Checkpoints</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Text style={styles.statNumber}>
+                  {checkpoints.filter(cp => cp.motivo === 'ronda_em_site').length}
+                </Text>
+                <Text style={styles.statLabel}>Sites</Text>
+              </View>
+            </View>
+          </View>
         )}
 
         {/* Ronda Details */}
@@ -732,6 +1157,13 @@ export default function HomeScreen() {
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Placa Inicial:</Text>
               <Text style={styles.detailValue}>{rondaDetails.placaInicial}</Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Modo:</Text>
+              <Text style={styles.detailValue}>
+                {rondaDetails.modoRota === 'predefinida' ? 'Rota Pré-definida' : 'Rota Livre'}
+              </Text>
             </View>
 
             {rondaDetails.fim && (
@@ -793,13 +1225,13 @@ export default function HomeScreen() {
   );
 }
 
-// Estilos aprimorados
+// Estilos (mantidos iguais do código anterior)
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#2a003f', // Cor roxa/púrpura
-    paddingTop: 40, // Espaçamento do topo
-    paddingHorizontal: 20, // Espaçamento lateral
+    backgroundColor: '#2a003f',
+    paddingTop: 40,
+    paddingHorizontal: 20,
   },
   scrollContainer: {
     paddingBottom: 100,
@@ -808,7 +1240,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 20,
-    color: '#ffffff', // Cor do texto
+    color: '#ffffff',
   },
   button: {
     borderRadius: 5,
@@ -817,10 +1249,10 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   buttonStart: {
-    backgroundColor: '#28a745', // Cor verde para iniciar
+    backgroundColor: '#28a745',
   },
   buttonStop: {
-    backgroundColor: '#dc3545', // Cor vermelha para parar
+    backgroundColor: '#dc3545',
   },
   buttonText: {
     color: '#ffffff',
@@ -894,19 +1326,210 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 20,
     right: 20,
-    backgroundColor: '#dc3545', // Cor de alerta para o botão de pânico
+    backgroundColor: '#dc3545',
     borderRadius: 50,
     padding: 15,
     elevation: 5,
   },
   buttonCheckpoint: {
-    backgroundColor: '#007BFF', // Cor azul para checkpoints
+    backgroundColor: '#007BFF',
     borderRadius: 5,
     paddingVertical: 15,
     alignItems: 'center',
     marginVertical: 10,
   },
   buttonDisabled: {
-    backgroundColor: 'rgba(170, 170, 170, 0.5)', // Cor cinza mais transparente
+    backgroundColor: 'rgba(170, 170, 170, 0.5)',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    width: '90%',
+    maxHeight: '80%',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  modoRotaButton: {
+    padding: 20,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderRadius: 10,
+    alignItems: 'center',
+    marginBottom: 15,
+    backgroundColor: '#f8f9fa',
+  },
+  modoRotaTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 10,
+    color: '#333',
+  },
+  modoRotaDescricao: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 5,
+  },
+  rotasList: {
+    maxHeight: 300,
+  },
+  rotaItem: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  rotaNome: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  rotaPontos: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 5,
+  },
+  rotaContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  rotaTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+  },
+  progressContainer: {
+    marginBottom: 15,
+  },
+  progressText: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 5,
+  },
+  progressBar: {
+    height: 8,
+    backgroundColor: '#e9ecef',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#28a745',
+    borderRadius: 4,
+  },
+  proximoPontoContainer: {
+    backgroundColor: '#d1ecf1',
+    padding: 10,
+    borderRadius: 5,
+    marginBottom: 15,
+  },
+  proximoPontoTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0c5460',
+  },
+  proximoPonto: {
+    fontSize: 16,
+    color: '#0c5460',
+    fontWeight: 'bold',
+  },
+  pontosList: {
+    maxHeight: 200,
+  },
+  pontoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  pontoConcluido: {
+    backgroundColor: '#d4edda',
+  },
+  pontoText: {
+    flex: 1,
+    marginLeft: 10,
+    color: '#333',
+  },
+  pontoTime: {
+    fontSize: 12,
+    color: '#666',
+  },
+  buttonCancel: {
+    backgroundColor: '#6c757d',
+    borderRadius: 5,
+    padding: 15,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  modoInfoContainer: {
+    backgroundColor: '#e7f3ff',
+    padding: 10,
+    borderRadius: 5,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#007BFF',
+  },
+  modoInfoText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#007BFF',
+  },
+  rotaAtivaText: {
+    fontSize: 14,
+    color: '#0056b3',
+    marginTop: 5,
+  },
+  rotaLivreContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#e7f3ff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#b3d9ff',
+  },
+  rotaLivreTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#007BFF',
+    marginBottom: 10,
+  },
+  rotaLivreDescricao: {
+    fontSize: 14,
+    color: '#0056b3',
+    lineHeight: 20,
+    marginBottom: 15,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#007BFF',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#0056b3',
+    marginTop: 5,
   },
 });

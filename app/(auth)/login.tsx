@@ -93,7 +93,7 @@ export default function LoginScreen() {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.version}>1.0.0.091025</Text>
+      <Text style={styles.version}>1.0.0.301025</Text>
     </View>
   );
 }

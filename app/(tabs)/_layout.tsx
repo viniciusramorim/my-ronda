@@ -1,7 +1,6 @@
-import { Tabs, useRouter } from 'expo-router';
+import { Tabs } from 'expo-router';
 import React, { createContext, useContext, useState } from 'react';
 import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { HapticTab } from '@/components/HapticTab';
 import { IconSymbol } from '@/components/ui/IconSymbol';
@@ -16,13 +15,7 @@ const RondaContext = createContext({
 export const useRonda = () => useContext(RondaContext);
 
 export default function TabLayout() {
-  const router = useRouter();
   const [isTracking, setIsTracking] = useState(false);
-
-  const handleLogout = async () => {
-    await AsyncStorage.removeItem('loggedIn');
-    router.replace('/(auth)/login');
-  };
 
   return (
     <RondaContext.Provider value={{ isTracking, setIsTracking }}>
@@ -44,6 +37,13 @@ export default function TabLayout() {
           options={{
             title: 'Inicio',
             tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="route"
+          options={{
+            title: 'Rotas',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="pin.fill" color={color} />,
           }}
         />
         <Tabs.Screen
