@@ -1,20 +1,22 @@
-import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, StyleSheet } from 'react-native';
+import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, ActivityIndicator } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
 import { useEffect, useState, useCallback } from 'react';
-import { doc, setDoc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, collection, addDoc, getDoc, query, where, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { otherDb, storage } from '@/services/firebaseConfig';
 import { useRonda } from './_layout';
+import styles from '@/assets/styles/stylesIndex';
 import KmModal from '@/components/modals/KmModal';
 import PanicModal from '@/components/modals/PanicModal';
 import CheckpointModal from '@/components/modals/CheckpointModal';
+import TrocaVeiculoModal from '@/components/modals/TrocaVeiculoModal';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 const BACKGROUND_FETCH_TASK = 'background-fetch-task';
@@ -143,21 +145,8 @@ export default function HomeScreen() {
   const [proximoPonto, setProximoPonto] = useState<PontoColeta | null>(null);
   const [mostrarSelecaoRota, setMostrarSelecaoRota] = useState(false);
   const [modoRota, setModoRota] = useState<'livre' | 'predefinida' | null>(null);
-
-  // Registrar tarefas de background
-  const registerBackgroundTasks = useCallback(async () => {
-    try {
-      // Registrar background fetch
-      await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
-        minimumInterval: 15 * 60, // 15 minutos
-        stopOnTerminate: false,
-        startOnBoot: true,
-      });
-      console.log('Background fetch registrado com sucesso');
-    } catch (err) {
-      console.log('Erro ao registrar background fetch:', err);
-    }
-  }, []);
+  const [showTrocaVeiculoModal, setShowTrocaVeiculoModal] = useState(false);
+  const [carregandoRotas, setCarregandoRotas] = useState(false);
 
   // Verificar e solicitar permissões
   const checkAndRequestPermissions = useCallback(async () => {
@@ -198,6 +187,21 @@ export default function HomeScreen() {
     }
   }, []);
 
+  // Registrar tarefas de background
+  const registerBackgroundTasks = useCallback(async () => {
+    try {
+      // Registrar background fetch
+      await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
+        minimumInterval: 15 * 60, // 15 minutos
+        stopOnTerminate: false,
+        startOnBoot: true,
+      });
+      console.log('Background fetch registrado com sucesso');
+    } catch (err) {
+      console.log('Erro ao registrar background fetch:', err);
+    }
+  }, []);
+
   // Verificar otimizações de bateria no Android
   const checkBatteryOptimizations = useCallback(async () => {
     if (Platform.OS === 'android') {
@@ -233,41 +237,96 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // Carregar rotas pré-definidas
+  // Carregar rotas pré-definidas do Firestore filtradas por UID
   const carregarRotasPreDefinidas = useCallback(async () => {
+    setCarregandoRotas(true);
     try {
-      // Aqui você pode carregar de um arquivo local, API ou Firebase
-      const rotasExemplo: RotaPreDefinida[] = [
-        {
-          id: 'rota_1',
-          nome: 'Rota Norte',
-          ativa: true,
-          pontos: [
-            { id: 'p1', sigla: 'STA', uf: 'SP', descricao: 'Site Torre A', ordem: 1, concluido: false },
-            { id: 'p2', sigla: 'STB', uf: 'SP', descricao: 'Site Torre B', ordem: 2, concluido: false },
-            { id: 'p3', sigla: 'MTC', uf: 'MG', descricao: 'Mini Torre C', ordem: 3, concluido: false },
-            { id: 'p4', sigla: 'CTD', uf: 'RJ', descricao: 'Centro Distribuição D', ordem: 4, concluido: false },
-          ]
-        },
-        {
-          id: 'rota_2',
-          nome: 'Rota Sul',
-          ativa: true,
-          pontos: [
-            { id: 'p5', sigla: 'STE', uf: 'PR', descricao: 'Site Torre E', ordem: 1, concluido: false },
-            { id: 'p6', sigla: 'MTF', uf: 'SC', descricao: 'Mini Torre F', ordem: 2, concluido: false },
-            { id: 'p7', sigla: 'CTG', uf: 'RS', descricao: 'Centro Distribuição G', ordem: 3, concluido: false },
-          ]
-        }
-      ];
-      
-      setRotasPreDefinidas(rotasExemplo);
-      return rotasExemplo;
+      console.log('Carregando rotas pré-definidas do Firestore...');
+
+      if (!uid) {
+        console.log('UID do usuário não disponível');
+        setRotasPreDefinidas([]);
+        return [];
+      }
+
+      console.log('UID do usuário:', uid);
+
+      // Referência para a collection rotas_rondas
+      const rotasRef = collection(otherDb, 'rotas_rondas');
+
+      // Query para buscar apenas rotas ativas E que tenham o UID do usuário
+      const q = query(
+        rotasRef,
+        where('ativa', '==', true),
+        where('uid', '==', uid)
+      );
+
+      const querySnapshot = await getDocs(q);
+
+      const rotas: RotaPreDefinida[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        console.log('Rota encontrada para o usuário:', data.nome);
+
+        // Mapear os dados do Firestore para a interface RotaPreDefinida
+        const rota: RotaPreDefinida = {
+          id: doc.id,
+          nome: data.nome || 'Rota sem nome',
+          ativa: data.ativa || false,
+          pontos: data.pontos?.map((ponto: any, index: number) => ({
+            id: ponto.id || `ponto_${index}`,
+            sigla: ponto.sigla || '',
+            uf: ponto.uf || '',
+            descricao: ponto.descricao || '',
+            ordem: ponto.ordem || index + 1,
+            concluido: ponto.concluido || false,
+            timestamp: ponto.timestamp || '',
+            imageUrl: ponto.imageUrl || '',
+          })) || [],
+        };
+
+        rotas.push(rota);
+      });
+
+      console.log(`Total de rotas carregadas para o usuário ${uid}: ${rotas.length}`);
+      setRotasPreDefinidas(rotas);
+
+      if (rotas.length === 0) {
+        console.log('Nenhuma rota encontrada para o UID:', uid);
+        Alert.alert(
+          'Nenhuma Rota Disponível',
+          'Não foram encontradas rotas pré-definidas para o seu usuário.'
+        );
+      }
+
+      return rotas;
+
     } catch (error) {
-      console.error('Erro ao carregar rotas pré-definidas:', error);
+      console.error('Erro ao carregar rotas pré-definidas do Firestore:', error);
+
+      // Verificar se é erro de permissão ou se não há rotas para o usuário
+      if (error instanceof Error) {
+        if (error.message.includes('permission') || error.message.includes('Permission')) {
+          Alert.alert(
+            'Erro de Permissão',
+            'Não foi possível acessar as rotas. Verifique suas permissões.'
+          );
+        } else {
+          Alert.alert(
+            'Erro de Conexão',
+            'Não foi possível carregar as rotas do servidor. Verifique sua conexão.'
+          );
+        }
+      }
+
+      // Fallback para dados vazios em caso de erro
+      setRotasPreDefinidas([]);
       return [];
+    } finally {
+      setCarregandoRotas(false);
     }
-  }, []);
+  }, [uid]); // ← Adicione uid como dependência
 
   // Carregar checkpoints da ronda
   const carregarCheckpoints = useCallback(async (rondaId: string) => {
@@ -279,74 +338,6 @@ export default function HomeScreen() {
       console.error('Erro ao carregar checkpoints:', error);
     }
   }, []);
-
-  // Verificar ronda ativa - FUNÇÃO ATUALIZADA
-  const verificarRondaAtiva = useCallback(async () => {
-    try {
-      const rondaSalva = await AsyncStorage.getItem('rondaId');
-      const userUid = await AsyncStorage.getItem('userUid');
-      const rotaAtivaSalva = await AsyncStorage.getItem('rotaAtiva');
-      const modoRotaSalvo = await AsyncStorage.getItem('modoRota');
-
-      if (rondaSalva && userUid) {
-        setRondaId(rondaSalva);
-        setUid(userUid);
-        setIsTracking(true);
-
-        // Recuperar detalhes da ronda do Firebase
-        const rondaRef = doc(otherDb, 'rondas', rondaSalva);
-        const rondaDoc = await getDoc(rondaRef);
-        
-        if (rondaDoc.exists()) {
-          const data = rondaDoc.data();
-          setRondaDetails(data);
-          
-          // Restaurar modo da rota
-          if (modoRotaSalvo) {
-            setModoRota(modoRotaSalvo as 'livre' | 'predefinida');
-          } else if (data.modoRota) {
-            setModoRota(data.modoRota);
-          }
-
-          // Restaurar rota ativa se existir
-          if (rotaAtivaSalva && modoRotaSalvo === 'predefinida') {
-            try {
-              const rotaParseada = JSON.parse(rotaAtivaSalva);
-              setRotaAtiva(rotaParseada);
-              
-              // Encontrar próximo ponto não concluído
-              const proximo = rotaParseada.pontos.find((p: PontoColeta) => !p.concluido);
-              setProximoPonto(proximo || null);
-              
-              console.log('Rota pré-definida recuperada:', rotaParseada.nome);
-            } catch (error) {
-              console.error('Erro ao parsear rota ativa:', error);
-            }
-          } else if (data.rotaPreDefinida && modoRotaSalvo === 'predefinida') {
-            // Tentar recuperar do Firebase se não tiver no AsyncStorage
-            const rotas = await carregarRotasPreDefinidas();
-            const rota = rotas.find(r => r.id === data.rotaPreDefinida.id);
-            if (rota) {
-              setRotaAtiva(rota);
-              // Encontrar próximo ponto não concluído baseado nos checkpoints
-              const proximo = rota.pontos.find(p => !p.concluido);
-              setProximoPonto(proximo || null);
-            }
-          }
-
-          // Carregar checkpoints
-          await carregarCheckpoints(rondaSalva);
-        }
-
-        // Iniciar monitoramento de localização
-        await startLocationTracking(rondaSalva, userUid);
-
-        console.log('Ronda recuperada - Modo:', modoRotaSalvo || data?.modoRota);
-      }
-    } catch (error) {
-      console.error('Erro ao verificar ronda ativa:', error);
-    }
-  }, [carregarRotasPreDefinidas, carregarCheckpoints]);
 
   // Salvar estado da rota no AsyncStorage - NOVA FUNÇÃO
   const salvarEstadoRota = useCallback(async () => {
@@ -378,7 +369,7 @@ export default function HomeScreen() {
     }
   }, [rotaAtiva, modoRota, isTracking, salvarEstadoRota]);
 
-  // Iniciar monitoramento de localização
+  // Iniciar monitoramento de localização - ATUALIZADA
   const startLocationTracking = useCallback(async (rondaId: string, userId: string) => {
     try {
       const rondaRef = doc(otherDb, 'rondas', rondaId);
@@ -418,24 +409,120 @@ export default function HomeScreen() {
 
       setSubscription(sub);
 
-      // Iniciar serviço de background
-      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 600000,
-        distanceInterval: 0,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: 'Rastreamento de Localização',
-          notificationBody: 'Seu aplicativo está rastreando sua localização.',
-          notificationColor: '#0000ff',
-        },
-      });
+      // Iniciar serviço de background usando a função auxiliar
+      await gerenciarTarefaBackground('iniciar');
 
       console.log('Monitoramento de localização iniciado');
     } catch (error) {
       console.error('Erro ao iniciar monitoramento de localização:', error);
     }
   }, []);
+
+  // Verificar ronda ativa - ATUALIZADA
+  const verificarRondaAtiva = useCallback(async () => {
+    try {
+      const rondaSalva = await AsyncStorage.getItem('rondaId');
+      const userUid = await AsyncStorage.getItem('userUid');
+      const rotaAtivaSalva = await AsyncStorage.getItem('rotaAtiva');
+      const modoRotaSalvo = await AsyncStorage.getItem('modoRota');
+
+      if (rondaSalva && userUid) {
+        setRondaId(rondaSalva);
+        setUid(userUid);
+        setIsTracking(true);
+
+        // Recuperar detalhes da ronda do Firebase
+        const rondaRef = doc(otherDb, 'rondas', rondaSalva);
+        const rondaDoc = await getDoc(rondaRef);
+
+        if (rondaDoc.exists()) {
+          const data = rondaDoc.data();
+          setRondaDetails(data);
+
+          // Restaurar modo da rota
+          if (modoRotaSalvo) {
+            setModoRota(modoRotaSalvo as 'livre' | 'predefinida');
+          } else if (data.modoRota) {
+            setModoRota(data.modoRota);
+          }
+
+          // Restaurar rota ativa se existir
+          if (rotaAtivaSalva && modoRotaSalvo === 'predefinida') {
+            try {
+              const rotaParseada = JSON.parse(rotaAtivaSalva);
+              setRotaAtiva(rotaParseada);
+
+              // Encontrar próximo ponto não concluído
+              const proximo = rotaParseada.pontos.find((p: PontoColeta) => !p.concluido);
+              setProximoPonto(proximo || null);
+
+              console.log('Rota pré-definida recuperada do AsyncStorage:', rotaParseada.nome);
+            } catch (error) {
+              console.error('Erro ao parsear rota ativa do AsyncStorage:', error);
+            }
+          } else if (data.rotaPreDefinida && modoRotaSalvo === 'predefinida') {
+            // Tentar recuperar do Firestore se não tiver no AsyncStorage
+            console.log('Tentando recuperar rota do Firestore:', data.rotaPreDefinida.id);
+
+            try {
+              const rotaDocRef = doc(otherDb, 'rotas_rondas', data.rotaPreDefinida.id);
+              const rotaDocSnap = await getDoc(rotaDocRef);
+
+              if (rotaDocSnap.exists()) {
+                const rotaData = rotaDocSnap.data();
+
+                // Verificar se a rota pertence ao usuário atual
+                if (rotaData.uid === userUid && rotaData.ativa) {
+                  const rota: RotaPreDefinida = {
+                    id: rotaDocSnap.id,
+                    nome: rotaData.nome || 'Rota sem nome',
+                    ativa: rotaData.ativa || false,
+                    pontos: rotaData.pontos?.map((ponto: any, index: number) => ({
+                      id: ponto.id || `ponto_${index}`,
+                      sigla: ponto.sigla || '',
+                      uf: ponto.uf || '',
+                      descricao: ponto.descricao || '',
+                      ordem: ponto.ordem || index + 1,
+                      concluido: ponto.concluido || false,
+                      timestamp: ponto.timestamp || '',
+                      imageUrl: ponto.imageUrl || '',
+                    })) || [],
+                  };
+
+                  setRotaAtiva(rota);
+
+                  // Encontrar próximo ponto não concluído baseado nos checkpoints
+                  const proximo = rota.pontos.find(p => !p.concluido);
+                  setProximoPonto(proximo || null);
+
+                  console.log('Rota pré-definida recuperada do Firestore:', rota.nome);
+                } else {
+                  console.log('Rota não pertence ao usuário ou está inativa');
+                  setModoRota('livre'); // Muda para modo livre se a rota não for válida
+                }
+              } else {
+                console.log('Rota não encontrada no Firestore:', data.rotaPreDefinida.id);
+                setModoRota('livre'); // Muda para modo livre se a rota não for encontrada
+              }
+            } catch (error) {
+              console.error('Erro ao recuperar rota do Firestore:', error);
+              setModoRota('livre'); // Muda para modo livre em caso de erro
+            }
+          }
+
+          // Carregar checkpoints
+          await carregarCheckpoints(rondaSalva);
+        }
+
+        // Iniciar monitoramento de localização
+        await startLocationTracking(rondaSalva, userUid);
+
+        console.log('Ronda recuperada - Modo:', modoRotaSalvo);
+      }
+    } catch (error) {
+      console.error('Erro ao verificar ronda ativa:', error);
+    }
+  }, [carregarCheckpoints, startLocationTracking, uid]);
 
   // Lidar com mudanças no estado do app
   useEffect(() => {
@@ -468,8 +555,8 @@ export default function HomeScreen() {
     const initialize = async () => {
       await registerBackgroundTasks();
       await checkAndRequestPermissions();
-      await userData();
-      await carregarRotasPreDefinidas();
+      await userData(); // ← Isso carrega o UID primeiro
+      await carregarRotasPreDefinidas(); // ← Depois carrega as rotas
       await verificarRondaAtiva();
     };
 
@@ -482,6 +569,14 @@ export default function HomeScreen() {
       }
     };
   }, []);
+
+  // Efeito para recarregar rotas quando o UID mudar
+  useEffect(() => {
+    if (uid) {
+      console.log('UID carregado, recarregando rotas...');
+      carregarRotasPreDefinidas();
+    }
+  }, [uid, carregarRotasPreDefinidas]);
 
   // Tirar foto
   const takeImage = async () => {
@@ -537,7 +632,7 @@ export default function HomeScreen() {
   // Selecionar modo de rota
   const selecionarModoRota = (modo: 'livre' | 'predefinida') => {
     setModoRota(modo);
-    
+
     if (modo === 'predefinida') {
       // Manter o modal aberto para seleção da rota específica
       setMostrarSelecaoRota(true);
@@ -562,8 +657,8 @@ export default function HomeScreen() {
 
     try {
       // Marcar ponto atual como concluído
-      const pontosAtualizados = rotaAtiva.pontos.map(ponto => 
-        ponto.id === proximoPonto.id 
+      const pontosAtualizados = rotaAtiva.pontos.map(ponto =>
+        ponto.id === proximoPonto.id
           ? { ...ponto, concluido: true, timestamp: new Date().toISOString() }
           : ponto
       );
@@ -577,7 +672,7 @@ export default function HomeScreen() {
 
       // Encontrar próximo ponto não concluído
       const proximo = pontosAtualizados.find(p => !p.concluido);
-      
+
       if (proximo) {
         setProximoPonto(proximo);
         Alert.alert('Próximo Ponto', `Siga para: ${proximo.sigla}-${proximo.uf} - ${proximo.descricao}`);
@@ -647,7 +742,7 @@ export default function HomeScreen() {
       // Mostrar mensagem conforme o modo
       if (modoRota === 'predefinida' && rotaAtiva && proximoPonto) {
         Alert.alert(
-          'Rota Iniciada', 
+          'Rota Iniciada',
           `Rota "${rotaAtiva.nome}" iniciada. Primeiro ponto: ${proximoPonto.sigla}-${proximoPonto.uf}`
         );
       } else {
@@ -659,12 +754,51 @@ export default function HomeScreen() {
     }
   };
 
+  // Função auxiliar para gerenciar tarefas de background
+  const gerenciarTarefaBackground = async (acao: 'iniciar' | 'parar') => {
+    try {
+      const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+
+      if (acao === 'iniciar' && !isTaskRegistered) {
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 600000,
+          distanceInterval: 0,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: 'Rastreamento de Localização',
+            notificationBody: 'Seu aplicativo está rastreando sua localização.',
+            notificationColor: '#0000ff',
+          },
+        });
+        console.log('Tarefa de background iniciada');
+      } else if (acao === 'parar' && isTaskRegistered) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+        console.log('Tarefa de background parada');
+      }
+    } catch (error) {
+      console.error(`Erro ao ${acao} tarefa de background:`, error);
+
+      if (error instanceof Error && error.message.includes('TaskNotFoundException')) {
+        console.log('Tarefa não encontrada - provavelmente já foi removida');
+      } else if (acao === 'parar') {
+        // Se não conseguimos parar a tarefa, tentar forçar a remoção
+        try {
+          await BackgroundFetch.unregisterTaskAsync(LOCATION_TASK_NAME);
+          console.log('Tarefa forçadamente removida');
+        } catch (unregisterError) {
+          console.error('Erro ao forçar remoção da tarefa:', unregisterError);
+        }
+      }
+    }
+  };
+
   // Parar ronda
   const stopTracking = async () => {
     setShowKmModal('fim');
   };
 
-  // Confirmar parada da ronda - ATUALIZADA
+  // Confirmar parada da ronda
   const confirmStopTracking = async () => {
     if (!kmFinal || !placaFinal) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem final e a placa do veículo.');
@@ -677,12 +811,15 @@ export default function HomeScreen() {
     }
 
     try {
+      // Parar subscription do foreground primeiro
       if (subscription) {
         subscription.remove();
         setSubscription(null);
       }
 
       setIsTracking(false);
+
+      await gerenciarTarefaBackground('parar');
 
       if (rondaId && uid) {
         const rondaRef = doc(otherDb, 'rondas', rondaId);
@@ -711,8 +848,7 @@ export default function HomeScreen() {
           }),
           updateDoc(userRef, {
             status_ronda: "Parado"
-          }),
-          Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+          })
         ]);
 
         setRondaDetails((prev: any) => ({
@@ -742,10 +878,20 @@ export default function HomeScreen() {
       }, 1000);
 
       await AsyncStorage.removeItem('rondaId');
-      await limparEstadoRota(); // Limpar estado da rota
+      await limparEstadoRota();
+
+      Alert.alert('Sucesso', 'Ronda finalizada com sucesso!');
+
     } catch (error) {
       console.error('Erro ao parar rastreamento:', error);
-      Alert.alert('Erro', 'Não foi possível parar o rastreamento.');
+
+      // Mesmo se der erro na parada do background, continuar com o processo
+      if (error instanceof Error && error.message.includes('TaskNotFoundException')) {
+        console.log('Tarefa já foi removida, continuando processo...');
+        // Continuar com o processo mesmo se a tarefa não for encontrada
+      } else {
+        Alert.alert('Aviso', 'Ronda finalizada, mas houve um problema ao parar alguns serviços.');
+      }
     }
   };
 
@@ -766,13 +912,16 @@ export default function HomeScreen() {
       // Comportamento normal quando não há rota ativa (modo livre)
       if (motivo === 'ronda_em_site') {
         setShowCheckpointModal(true);
+      } else if (motivo === 'troca_de_veiculo') {
+        // Abrir modal específico para troca de veículo
+        setShowTrocaVeiculoModal(true);
       } else {
         confirmCheckpoint();
       }
     }
   };
 
-  // Confirmar checkpoint - ATUALIZADA
+  // Confirmar checkpoint
   const confirmCheckpoint = async () => {
     try {
       let imageUrl = null;
@@ -780,7 +929,7 @@ export default function HomeScreen() {
         imageUrl = await uploadImage();
       }
 
-      const site = proximoPonto 
+      const site = proximoPonto
         ? `${proximoPonto.sigla}-${proximoPonto.uf}`
         : `${siteCode.toUpperCase()}-${uf}`;
 
@@ -861,6 +1010,87 @@ export default function HomeScreen() {
     }
   };
 
+  // Função para lidar com troca de veículo
+  const handleTrocaVeiculo = async (dados: {
+    kmAtual: string;
+    placaAtual: string;
+    kmNovo: string;
+    placaNovo: string;
+    imageUrl?: string;
+  }) => {
+    if (!rondaId) {
+      Alert.alert('Erro', 'Nenhuma ronda ativa encontrada.');
+      return;
+    }
+
+    try {
+      let imageUrl = null;
+      if (image) {
+        imageUrl = await uploadImage();
+      }
+
+      // Criar checkpoint de troca de veículo
+      const checkpointData = {
+        site: 'TROCA_VEICULO',
+        motivo: 'troca_de_veiculo',
+        latitude: location?.coords.latitude || 0,
+        longitude: location?.coords.longitude || 0,
+        timestamp: new Date().toISOString(),
+        detalhes: {
+          kmAnterior: parseFloat(dados.kmAtual),
+          placaAnterior: dados.placaAtual,
+          kmNovo: parseFloat(dados.kmNovo),
+          placaNovo: dados.placaNovo,
+        },
+        ...(imageUrl && { imageUrl }),
+      };
+
+      const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
+      await addDoc(checkpointsRef, checkpointData);
+
+      // Atualizar a ronda com os novos dados do veículo
+      const rondaRef = doc(otherDb, 'rondas', rondaId);
+      await updateDoc(rondaRef, {
+        ultimaTrocaVeiculo: {
+          timestamp: new Date().toISOString(),
+          kmAnterior: parseFloat(dados.kmAtual),
+          placaAnterior: dados.placaAtual,
+          kmNovo: parseFloat(dados.kmNovo),
+          placaNovo: dados.placaNovo,
+          imagem: imageUrl,
+        },
+        // Atualizar também os dados atuais da ronda
+        placaAtual: dados.placaNovo,
+        kmAtual: parseFloat(dados.kmNovo),
+      });
+
+      // Atualizar estado local
+      setRondaDetails((prev: any) => ({
+        ...prev,
+        placaAtual: dados.placaNovo,
+        kmAtual: parseFloat(dados.kmNovo),
+        ultimaTrocaVeiculo: {
+          timestamp: new Date().toISOString(),
+          kmAnterior: parseFloat(dados.kmAtual),
+          placaAnterior: dados.placaAtual,
+          kmNovo: parseFloat(dados.kmNovo),
+          placaNovo: dados.placaNovo,
+          imagem: imageUrl,
+        },
+      }));
+
+      // Adicionar ao histórico de checkpoints
+      setCheckpoints(prev => [...prev, checkpointData]);
+
+      Alert.alert('Sucesso', 'Troca de veículo registrada com sucesso!');
+      setShowTrocaVeiculoModal(false);
+      setImage(null);
+    } catch (error) {
+      console.error('Erro ao registrar troca de veículo:', error);
+      Alert.alert('Erro', 'Não foi possível registrar a troca de veículo.');
+    }
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -887,7 +1117,7 @@ export default function HomeScreen() {
                 // Seleção inicial do modo
                 <>
                   <Text style={styles.modalTitle}>Selecione o Modo de Ronda</Text>
-                  
+
                   <TouchableOpacity
                     style={styles.modoRotaButton}
                     onPress={() => selecionarModoRota('livre')}
@@ -921,20 +1151,55 @@ export default function HomeScreen() {
                 // Seleção de rota específica (apenas para modo pré-definido)
                 <>
                   <Text style={styles.modalTitle}>Selecionar Rota Pré-Definida</Text>
-                  <ScrollView style={styles.rotasList}>
-                    {rotasPreDefinidas.map(rota => (
+
+                  {carregandoRotas ? (
+                    <View style={styles.carregandoContainer}>
+                      <ActivityIndicator size="large" color="#007BFF" />
+                      <Text style={styles.carregandoText}>Carregando rotas...</Text>
+                    </View>
+                  ) : (
+                    <>
+                      <ScrollView style={styles.rotasList}>
+                        {rotasPreDefinidas.length > 0 ? (
+                          rotasPreDefinidas.map(rota => (
+                            <TouchableOpacity
+                              key={rota.id}
+                              style={styles.rotaItem}
+                              onPress={() => confirmarRotaSelecionada(rota)}
+                            >
+                              <Text style={styles.rotaNome}>{rota.nome}</Text>
+                              <Text style={styles.rotaPontos}>
+                                {rota.pontos.length} pontos • {rota.pontos.map(p => `${p.sigla}-${p.uf}`).join(' → ')}
+                              </Text>
+                              <Text style={styles.rotaStatus}>
+                                {rota.ativa ? 'Ativa' : 'Inativa'}
+                              </Text>
+                            </TouchableOpacity>
+                          ))
+                        ) : (
+                          // No JSX do modal, atualize a mensagem quando não houver rotas:
+                          <View style={styles.semRotasContainer}>
+                            <MaterialCommunityIcons name="map-marker-off" size={40} color="#999" />
+                            <Text style={styles.semRotasText}>Nenhuma rota disponível</Text>
+                            <Text style={styles.semRotasSubtext}>
+                              Não há rotas pré-definidas cadastradas para o seu usuário.
+                              {"\n"}UID: {uid?.substring(0, 8)}...
+                            </Text>
+                          </View>
+                        )}
+                      </ScrollView>
+
                       <TouchableOpacity
-                        key={rota.id}
-                        style={styles.rotaItem}
-                        onPress={() => confirmarRotaSelecionada(rota)}
+                        style={styles.buttonRecarregar}
+                        onPress={carregarRotasPreDefinidas}
+                        disabled={carregandoRotas}
                       >
-                        <Text style={styles.rotaNome}>{rota.nome}</Text>
-                        <Text style={styles.rotaPontos}>
-                          {rota.pontos.length} pontos • {rota.pontos.map(p => `${p.sigla}-${p.uf}`).join(' → ')}
-                        </Text>
+                        <MaterialCommunityIcons name="reload" size={20} color="#fff" />
+                        <Text style={styles.buttonText}>Recarregar Rotas</Text>
                       </TouchableOpacity>
-                    ))}
-                  </ScrollView>
+                    </>
+                  )}
+
                   <TouchableOpacity
                     style={styles.buttonCancel}
                     onPress={() => {
@@ -1007,6 +1272,19 @@ export default function HomeScreen() {
           />
         </Modal>
 
+        {/* Troca Veiculo Modal */}
+        <TrocaVeiculoModal
+          visible={showTrocaVeiculoModal}
+          onCancel={() => {
+            setShowTrocaVeiculoModal(false);
+            setImage(null);
+          }}
+          onConfirm={handleTrocaVeiculo}
+          image={image}
+          onTakeImage={takeImage}
+          uploading={uploading}
+        />
+
         {/* Tracking Options */}
         {isTracking && (
           <>
@@ -1049,10 +1327,10 @@ export default function HomeScreen() {
               disabled={uploading || (!motivo && !proximoPonto)}
             >
               <Text style={styles.buttonText}>
-                {proximoPonto 
+                {proximoPonto
                   ? `Registrar ${proximoPonto.sigla}-${proximoPonto.uf}`
-                  : motivo === 'ronda_em_site' 
-                    ? 'Registrar Site' 
+                  : motivo === 'ronda_em_site'
+                    ? 'Registrar Site'
                     : 'Registrar Checkpoint'
                 }
               </Text>
@@ -1064,19 +1342,19 @@ export default function HomeScreen() {
         {isTracking && rotaAtiva && (
           <View style={styles.rotaContainer}>
             <Text style={styles.rotaTitle}>Rota: {rotaAtiva.nome}</Text>
-            
+
             <View style={styles.progressContainer}>
               <Text style={styles.progressText}>
                 Progresso: {rotaAtiva.pontos.filter(p => p.concluido).length} / {rotaAtiva.pontos.length}
               </Text>
               <View style={styles.progressBar}>
-                <View 
+                <View
                   style={[
                     styles.progressFill,
-                    { 
-                      width: `${(rotaAtiva.pontos.filter(p => p.concluido).length / rotaAtiva.pontos.length) * 100}%` 
+                    {
+                      width: `${(rotaAtiva.pontos.filter(p => p.concluido).length / rotaAtiva.pontos.length) * 100}%`
                     }
-                  ]} 
+                  ]}
                 />
               </View>
             </View>
@@ -1096,10 +1374,10 @@ export default function HomeScreen() {
                   styles.pontoItem,
                   ponto.concluido && styles.pontoConcluido
                 ]}>
-                  <MaterialCommunityIcons 
-                    name={ponto.concluido ? "check-circle" : "map-marker"} 
-                    size={20} 
-                    color={ponto.concluido ? "#28a745" : "#007BFF"} 
+                  <MaterialCommunityIcons
+                    name={ponto.concluido ? "check-circle" : "map-marker"}
+                    size={20}
+                    color={ponto.concluido ? "#28a745" : "#007BFF"}
                   />
                   <Text style={styles.pontoText}>
                     {ponto.sigla}-{ponto.uf} - {ponto.descricao}
@@ -1142,6 +1420,21 @@ export default function HomeScreen() {
           <View style={styles.detailsContainer}>
             <Text style={styles.detailsTitle}>Detalhes da Ronda</Text>
 
+            {/* Informações do veículo atual */}
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>Veículo Atual:</Text>
+              <Text style={styles.detailValue}>
+                {rondaDetails.placaAtual || rondaDetails.placaInicial}
+              </Text>
+            </View>
+
+            <View style={styles.detailRow}>
+              <Text style={styles.detailLabel}>KM Atual:</Text>
+              <Text style={styles.detailValue}>
+                {rondaDetails.kmAtual || rondaDetails.kmInicial}
+              </Text>
+            </View>
+
             <View style={styles.detailRow}>
               <Text style={styles.detailLabel}>Início:</Text>
               <Text style={styles.detailValue}>
@@ -1165,6 +1458,31 @@ export default function HomeScreen() {
                 {rondaDetails.modoRota === 'predefinida' ? 'Rota Pré-definida' : 'Rota Livre'}
               </Text>
             </View>
+
+            {/* Histórico de trocas de veículo */}
+            {rondaDetails.ultimaTrocaVeiculo && (
+              <View style={styles.trocaVeiculoContainer}>
+                <Text style={styles.trocaVeiculoTitle}>Última Troca de Veículo</Text>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>De:</Text>
+                  <Text style={styles.detailValue}>
+                    {rondaDetails.ultimaTrocaVeiculo.placaAnterior} (KM: {rondaDetails.ultimaTrocaVeiculo.kmAnterior})
+                  </Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Para:</Text>
+                  <Text style={styles.detailValue}>
+                    {rondaDetails.ultimaTrocaVeiculo.placaNovo} (KM: {rondaDetails.ultimaTrocaVeiculo.kmNovo})
+                  </Text>
+                </View>
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Data/Hora:</Text>
+                  <Text style={styles.detailValue}>
+                    {new Date(rondaDetails.ultimaTrocaVeiculo.timestamp).toLocaleString()}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             {rondaDetails.fim && (
               <>
@@ -1224,312 +1542,3 @@ export default function HomeScreen() {
     </View>
   );
 }
-
-// Estilos (mantidos iguais do código anterior)
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#2a003f',
-    paddingTop: 40,
-    paddingHorizontal: 20,
-  },
-  scrollContainer: {
-    paddingBottom: 100,
-  },
-  welcomeText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#ffffff',
-  },
-  button: {
-    borderRadius: 5,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginVertical: 10,
-  },
-  buttonStart: {
-    backgroundColor: '#28a745',
-  },
-  buttonStop: {
-    backgroundColor: '#dc3545',
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 18,
-  },
-  pickerContainer: {
-    borderColor: '#ccc',
-    borderWidth: 1,
-    borderRadius: 5,
-    marginBottom: 15,
-  },
-  picker: {
-    height: 60,
-    width: '100%',
-    color: '#ffffff',
-  },
-  detailsContainer: {
-    marginTop: 20,
-    padding: 10,
-    backgroundColor: '#ffffff',
-    borderRadius: 5,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-  },
-  detailsTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 10,
-    color: '#333',
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 5,
-  },
-  detailLabel: {
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  detailValue: {
-    color: '#555',
-  },
-  checkpointsContainer: {
-    marginTop: 10,
-    padding: 10,
-    backgroundColor: '#eef',
-    borderRadius: 5,
-  },
-  checkpointsTitle: {
-    fontWeight: 'bold',
-    color: '#007BFF',
-  },
-  checkpointItem: {
-    padding: 5,
-    borderBottomWidth: 1,
-    borderColor: '#ddd',
-  },
-  checkpointSite: {
-    fontWeight: 'bold',
-  },
-  checkpointMotivo: {
-    color: '#555',
-  },
-  checkpointTime: {
-    fontSize: 12,
-    color: '#777',
-  },
-  panicButton: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    backgroundColor: '#dc3545',
-    borderRadius: 50,
-    padding: 15,
-    elevation: 5,
-  },
-  buttonCheckpoint: {
-    backgroundColor: '#007BFF',
-    borderRadius: 5,
-    paddingVertical: 15,
-    alignItems: 'center',
-    marginVertical: 10,
-  },
-  buttonDisabled: {
-    backgroundColor: 'rgba(170, 170, 170, 0.5)',
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  modalContent: {
-    backgroundColor: 'white',
-    borderRadius: 10,
-    padding: 20,
-    width: '90%',
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
-  },
-  modoRotaButton: {
-    padding: 20,
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    borderRadius: 10,
-    alignItems: 'center',
-    marginBottom: 15,
-    backgroundColor: '#f8f9fa',
-  },
-  modoRotaTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginTop: 10,
-    color: '#333',
-  },
-  modoRotaDescricao: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginTop: 5,
-  },
-  rotasList: {
-    maxHeight: 300,
-  },
-  rotaItem: {
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  rotaNome: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  rotaPontos: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 5,
-  },
-  rotaContainer: {
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#dee2e6',
-  },
-  rotaTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-  },
-  progressContainer: {
-    marginBottom: 15,
-  },
-  progressText: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 5,
-  },
-  progressBar: {
-    height: 8,
-    backgroundColor: '#e9ecef',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#28a745',
-    borderRadius: 4,
-  },
-  proximoPontoContainer: {
-    backgroundColor: '#d1ecf1',
-    padding: 10,
-    borderRadius: 5,
-    marginBottom: 15,
-  },
-  proximoPontoTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#0c5460',
-  },
-  proximoPonto: {
-    fontSize: 16,
-    color: '#0c5460',
-    fontWeight: 'bold',
-  },
-  pontosList: {
-    maxHeight: 200,
-  },
-  pontoItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  pontoConcluido: {
-    backgroundColor: '#d4edda',
-  },
-  pontoText: {
-    flex: 1,
-    marginLeft: 10,
-    color: '#333',
-  },
-  pontoTime: {
-    fontSize: 12,
-    color: '#666',
-  },
-  buttonCancel: {
-    backgroundColor: '#6c757d',
-    borderRadius: 5,
-    padding: 15,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  modoInfoContainer: {
-    backgroundColor: '#e7f3ff',
-    padding: 10,
-    borderRadius: 5,
-    marginBottom: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: '#007BFF',
-  },
-  modoInfoText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#007BFF',
-  },
-  rotaAtivaText: {
-    fontSize: 14,
-    color: '#0056b3',
-    marginTop: 5,
-  },
-  rotaLivreContainer: {
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: '#e7f3ff',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#b3d9ff',
-  },
-  rotaLivreTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#007BFF',
-    marginBottom: 10,
-  },
-  rotaLivreDescricao: {
-    fontSize: 14,
-    color: '#0056b3',
-    lineHeight: 20,
-    marginBottom: 15,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  statItem: {
-    alignItems: 'center',
-  },
-  statNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#007BFF',
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#0056b3',
-    marginTop: 5,
-  },
-});

@@ -40,13 +40,6 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="route"
-          options={{
-            title: 'Rotas',
-            tabBarIcon: ({ color }) => <IconSymbol size={28} name="pin.fill" color={color} />,
-          }}
-        />
-        <Tabs.Screen
           name="logout"
           options={{
             title: 'Sair',
