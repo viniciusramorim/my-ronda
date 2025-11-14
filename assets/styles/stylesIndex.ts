@@ -364,6 +364,49 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         gap: 10,
     },
+    // No seu arquivo styles.js
+    proximoPontoContainerProximo: {
+        backgroundColor: '#d4edda',
+        borderColor: '#c3e6cb',
+    },
+    distanciaText: {
+        fontSize: 12,
+        color: '#666',
+        marginTop: 4,
+        fontStyle: 'italic',
+    },
+    distanciaInfo: {
+        marginTop: 8,
+    },
+    registroPermitidoText: {
+        fontSize: 12,
+        color: '#28a745',
+        marginTop: 2,
+        fontWeight: '500',
+    },
+    avisoDistanciaText: {
+        fontSize: 11,
+        color: '#ffc107',
+        marginTop: 2,
+        fontStyle: 'italic',
+    },
+    // No seu arquivo de estilos, adicione:
+    navegacaoButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#007BFF',
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        marginTop: 12,
+        gap: 8,
+    },
+    navegacaoButtonText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600',
+    },
 });
 
 export default styles;

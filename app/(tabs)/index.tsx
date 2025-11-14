@@ -1,4 +1,4 @@
-import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, ActivityIndicator } from 'react-native';
+import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, ActivityIndicator, Linking } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -44,6 +44,8 @@ interface PontoColeta {
   concluido: boolean;
   timestamp?: string;
   imageUrl?: string;
+  latitude: number; // ← Adicione isso
+  longitude: number; // ← Adicione isso
 }
 
 // Definição da tarefa de localização em background
@@ -147,6 +149,8 @@ export default function HomeScreen() {
   const [modoRota, setModoRota] = useState<'livre' | 'predefinida' | null>(null);
   const [showTrocaVeiculoModal, setShowTrocaVeiculoModal] = useState(false);
   const [carregandoRotas, setCarregandoRotas] = useState(false);
+  const [estaProximoDoPonto, setEstaProximoDoPonto] = useState(false);
+  const [distanciaAtual, setDistanciaAtual] = useState<number>(0);
 
   // Verificar e solicitar permissões
   const checkAndRequestPermissions = useCallback(async () => {
@@ -269,7 +273,7 @@ export default function HomeScreen() {
         const data = doc.data();
         console.log('Rota encontrada para o usuário:', data.nome);
 
-        // Mapear os dados do Firestore para a interface RotaPreDefinida
+        // Dentro da função carregarRotasPreDefinidas, no mapeamento dos pontos:
         const rota: RotaPreDefinida = {
           id: doc.id,
           nome: data.nome || 'Rota sem nome',
@@ -283,6 +287,8 @@ export default function HomeScreen() {
             concluido: ponto.concluido || false,
             timestamp: ponto.timestamp || '',
             imageUrl: ponto.imageUrl || '',
+            latitude: ponto.latitude || 0, // ← Adicione isso
+            longitude: ponto.longitude || 0, // ← Adicione isso
           })) || [],
         };
 
@@ -577,6 +583,43 @@ export default function HomeScreen() {
       carregarRotasPreDefinidas();
     }
   }, [uid, carregarRotasPreDefinidas]);
+
+  // Verificar proximidade do ponto atual (apenas para informação)
+  useEffect(() => {
+    if (isTracking && location && proximoPonto && modoRota === 'predefinida') {
+      const proximoPontoComCoordenadas = proximoPonto as PontoColeta;
+
+      if (proximoPontoComCoordenadas.latitude && proximoPontoComCoordenadas.longitude) {
+        const estaProximo = verificarProximidadeDoLocal(
+          {
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude
+          },
+          {
+            latitude: proximoPontoComCoordenadas.latitude,
+            longitude: proximoPontoComCoordenadas.longitude
+          },
+          0.1 // 100 metros
+        );
+
+        const distancia = calcularDistancia(
+          location.coords.latitude,
+          location.coords.longitude,
+          proximoPontoComCoordenadas.latitude,
+          proximoPontoComCoordenadas.longitude
+        );
+
+        setEstaProximoDoPonto(estaProximo);
+        setDistanciaAtual(distancia);
+
+        // Apenas informa quando está próximo, mas não bloqueia nada
+        if (estaProximo && !proximoPontoComCoordenadas.concluido) {
+          // Opcional: pode mostrar uma notificação informativa
+          console.log(`Próximo do ponto ${proximoPonto.sigla}-${proximoPonto.uf}`);
+        }
+      }
+    }
+  }, [location, proximoPonto, isTracking, modoRota]);
 
   // Tirar foto
   const takeImage = async () => {
@@ -895,7 +938,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Registrar checkpoint
   const handleCheckpoint = async () => {
     if (!rondaId || !location) {
       Alert.alert('Erro', 'Certifique-se de que o GPS está ativo.');
@@ -903,7 +945,47 @@ export default function HomeScreen() {
     }
 
     if (proximoPonto) {
-      // Usar dados do ponto da rota ativa
+      // SEM verificação de proximidade - permite registrar em qualquer lugar
+      // Apenas mostra um aviso informativo sobre a distância
+      if (proximoPonto.latitude && proximoPonto.longitude) {
+        const distancia = calcularDistancia(
+          location.coords.latitude,
+          location.coords.longitude,
+          proximoPonto.latitude,
+          proximoPonto.longitude
+        );
+
+        setDistanciaAtual(distancia);
+
+        // Mostra aviso informativo (mas não impede o registro)
+        if (distancia > 0.1) { // Mais de 100 metros
+          Alert.alert(
+            'Aviso - Distância do Local',
+            `Você está a ${distancia.toFixed(2)} km do ponto ${proximoPonto.sigla}-${proximoPonto.uf}. 
+            
+  Deseja registrar mesmo assim?`,
+            [
+              {
+                text: 'Cancelar',
+                style: 'cancel'
+              },
+              {
+                text: 'Registrar',
+                onPress: () => {
+                  // Continua com o registro mesmo longe
+                  setSiteCode(proximoPonto.sigla);
+                  setUf(proximoPonto.uf);
+                  setMotivo('ronda_em_site');
+                  setShowCheckpointModal(true);
+                }
+              }
+            ]
+          );
+          return; // Sai da função para aguardar a decisão do usuário
+        }
+      }
+
+      // Usar dados do ponto da rota ativa (se estiver próximo ou usuário confirmou)
       setSiteCode(proximoPonto.sigla);
       setUf(proximoPonto.uf);
       setMotivo('ronda_em_site');
@@ -913,7 +995,6 @@ export default function HomeScreen() {
       if (motivo === 'ronda_em_site') {
         setShowCheckpointModal(true);
       } else if (motivo === 'troca_de_veiculo') {
-        // Abrir modal específico para troca de veículo
         setShowTrocaVeiculoModal(true);
       } else {
         confirmCheckpoint();
@@ -1089,6 +1170,96 @@ export default function HomeScreen() {
       console.error('Erro ao registrar troca de veículo:', error);
       Alert.alert('Erro', 'Não foi possível registrar a troca de veículo.');
     }
+  };
+
+  // Função para calcular distância entre duas coordenadas (fórmula de Haversine)
+  const calcularDistancia = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Raio da Terra em quilômetros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const distancia = R * c; // Distância em quilômetros
+    return distancia;
+  };
+
+  // Função para verificar se está próximo de um ponto
+  const verificarProximidadeDoLocal = (
+    localizacaoAtual: { latitude: number; longitude: number } | null,
+    pontoAlvo: { latitude: number; longitude: number },
+    distanciaMaximaKm: number = 0.1 // 100 metros padrão
+  ): boolean => {
+    if (!localizacaoAtual) return false;
+
+    const distancia = calcularDistancia(
+      localizacaoAtual.latitude,
+      localizacaoAtual.longitude,
+      pontoAlvo.latitude,
+      pontoAlvo.longitude
+    );
+
+    return distancia <= distanciaMaximaKm;
+  };
+
+  // Função para abrir navegação até o ponto
+  const abrirNavegacao = async (ponto: PontoColeta) => {
+    if (!ponto.latitude || !ponto.longitude) {
+      Alert.alert('Erro', 'Coordenadas do ponto não disponíveis.');
+      return;
+    }
+
+    const destino = `${ponto.latitude},${ponto.longitude}`;
+    const label = `${ponto.sigla}-${ponto.uf}`;
+
+    // URLs para diferentes apps de navegação
+    const urls = {
+      waze: `https://waze.com/ul?ll=${ponto.latitude},${ponto.longitude}&navigate=yes`,
+      googleMaps: `https://www.google.com/maps/dir/?api=1&destination=${ponto.latitude},${ponto.longitude}&travelmode=driving`,
+      appleMaps: `http://maps.apple.com/?daddr=${ponto.latitude},${ponto.longitude}&dirflg=d`
+    };
+
+    // Mostrar opções para o usuário escolher
+    Alert.alert(
+      'Navegar até o local',
+      `Como deseja navegar até ${label}?`,
+      [
+        {
+          text: 'Waze',
+          onPress: async () => {
+            try {
+              const canOpen = await Linking.canOpenURL(urls.waze);
+              if (canOpen) {
+                await Linking.openURL(urls.waze);
+              } else {
+                // Se Waze não estiver instalado, tenta Google Maps
+                await Linking.openURL(urls.googleMaps);
+              }
+            } catch (error) {
+              console.error('Erro ao abrir Waze:', error);
+              Alert.alert('Erro', 'Não foi possível abrir o Waze.');
+            }
+          }
+        },
+        {
+          text: 'Google Maps',
+          onPress: async () => {
+            try {
+              await Linking.openURL(urls.googleMaps);
+            } catch (error) {
+              console.error('Erro ao abrir Google Maps:', error);
+              Alert.alert('Erro', 'Não foi possível abrir o Google Maps.');
+            }
+          }
+        },
+        {
+          text: 'Cancelar',
+          style: 'cancel'
+        }
+      ]
+    );
   };
 
   return (
@@ -1339,7 +1510,7 @@ export default function HomeScreen() {
         )}
 
         {/* Progresso da Rota (apenas para modo pré-definido) */}
-        {isTracking && rotaAtiva && (
+        {isTracking && rotaAtiva && proximoPonto && (
           <View style={styles.rotaContainer}>
             <Text style={styles.rotaTitle}>Rota: {rotaAtiva.nome}</Text>
 
@@ -1360,11 +1531,44 @@ export default function HomeScreen() {
             </View>
 
             {proximoPonto && (
-              <View style={styles.proximoPontoContainer}>
-                <Text style={styles.proximoPontoTitle}>Próximo Ponto:</Text>
+              <View style={[
+                styles.proximoPontoContainer,
+                estaProximoDoPonto && styles.proximoPontoContainerProximo
+              ]}>
+                <Text style={styles.proximoPontoTitle}>
+                  {estaProximoDoPonto ? '✅ Próximo Ponto (Perto)' : '📍 Próximo Ponto'}
+                </Text>
                 <Text style={styles.proximoPonto}>
                   {proximoPonto.sigla}-{proximoPonto.uf} - {proximoPonto.descricao}
                 </Text>
+
+                {location && (
+                  <View style={styles.distanciaInfo}>
+                    <Text style={styles.distanciaText}>
+                      Distância: {distanciaAtual.toFixed(2)} km
+                    </Text>
+                    <Text style={styles.registroPermitidoText}>
+                      ✅ Registro permitido de qualquer local
+                    </Text>
+                    {distanciaAtual > 0.1 && (
+                      <Text style={styles.avisoDistanciaText}>
+                        ⚠️ Você está longe do local
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Botão de Navegação */}
+                <TouchableOpacity
+                  style={styles.navegacaoButton}
+                  onPress={() => abrirNavegacao(proximoPonto)}
+                  disabled={!proximoPonto.latitude || !proximoPonto.longitude}
+                >
+                  <MaterialCommunityIcons name="navigation" size={20} color="#fff" />
+                  <Text style={styles.navegacaoButtonText}>
+                    Navegar até {proximoPonto.sigla}-{proximoPonto.uf}
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
 
