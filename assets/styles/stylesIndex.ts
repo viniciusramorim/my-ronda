@@ -407,6 +407,54 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
     },
+    // Adicione estes estilos ao seu arquivo de estilos
+    modalSubtitle: {
+        fontSize: 14,
+        color: '#666',
+        textAlign: 'center',
+        marginBottom: 15,
+    },
+    sitesList: {
+        maxHeight: 400,
+        marginBottom: 10,
+    },
+    siteItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+        backgroundColor: '#fff',
+    },
+    siteItemMaisProximo: {
+        backgroundColor: '#f0f8ff',
+        borderLeftWidth: 4,
+        borderLeftColor: '#007BFF',
+    },
+    siteInfo: {
+        flex: 1,
+    },
+    siteNome: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#333',
+        marginBottom: 4,
+    },
+    siteEndereco: {
+        fontSize: 14,
+        color: '#666',
+        marginBottom: 2,
+    },
+    siteDistancia: {
+        fontSize: 12,
+        color: '#007BFF',
+        marginBottom: 2,
+    },
+    siteRegional: {
+        fontSize: 12,
+        color: '#28a745',
+    },
 });
 
 export default styles;

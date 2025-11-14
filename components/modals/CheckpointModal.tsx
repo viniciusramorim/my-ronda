@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet, ScrollView, Alert } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 interface CheckpointModalProps {
   visible: boolean;
@@ -15,6 +16,10 @@ interface CheckpointModalProps {
   onCancel: () => void;
   onConfirm: () => void;
   uploading: boolean;
+  // Novas props para detecção automática
+  onAutoDetect?: () => void;
+  location?: any;
+  modoRota?: 'livre' | 'predefinida' | null;
 }
 
 const CheckpointModal: React.FC<CheckpointModalProps> = ({
@@ -30,6 +35,9 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
   onCancel,
   onConfirm,
   uploading,
+  onAutoDetect,
+  location,
+  modoRota,
 }) => {
   // Função para aplicar a máscara da sigla (3 caracteres maiúsculos)
   const handleSiglaChange = (text: string) => {
@@ -44,6 +52,21 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
     onSiteCodeChange(cleaned);
   };
 
+  // Função para lidar com a detecção automática
+  const handleAutoDetect = () => {
+    if (!location) {
+      Alert.alert('GPS Indisponível', 'Sua localização não está disponível. Verifique o GPS.');
+      return;
+    }
+
+    if (onAutoDetect) {
+      onAutoDetect();
+    }
+  };
+
+  // Verificar se pode mostrar o botão de detecção automática
+  const mostrarBotaoAutoDetect = modoRota === 'livre' && location && onAutoDetect;
+
   if (!visible) return null;
 
   return (
@@ -52,9 +75,24 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <Text style={styles.modalTitle}>Registrar Ronda</Text>
 
+          {/* Botão de detecção automática - apenas no modo livre */}
+          {mostrarBotaoAutoDetect && (
+            <TouchableOpacity
+              style={styles.autoDetectButton}
+              onPress={handleAutoDetect}
+              disabled={uploading}
+            >
+              <MaterialCommunityIcons name="radar" size={20} color="#fff" />
+              <Text style={styles.autoDetectButtonText}>
+                Buscar Site Mais Próximo
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          <Text style={styles.sectionLabel}>Sigla do Site</Text>
           <TextInput
             style={styles.modalInput}
-            placeholder="Sigla (ex: SP1) - Máx. 3 letras"
+            placeholder="Digite a sigla (ex: SP1) - Máx. 3 letras"
             placeholderTextColor="#999"
             value={siteCode}
             onChangeText={handleSiglaChange}
@@ -63,6 +101,7 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
             autoCapitalize="characters"
           />
 
+          <Text style={styles.sectionLabel}>UF</Text>
           <View style={styles.pickerContainerUF}>
             <Picker
               selectedValue={uf}
@@ -70,7 +109,7 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
               style={styles.ufPicker}
               enabled={!uploading}
             >
-              <Picker.Item label="UF" value="" color="#999" />
+              <Picker.Item label="Selecione a UF" value="" color="#999" />
               <Picker.Item label="AC" value="AC" />
               <Picker.Item label="AL" value="AL" />
               <Picker.Item label="AP" value="AP" />
@@ -101,9 +140,10 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
             </Picker>
           </View>
 
+          <Text style={styles.sectionLabel}>Comentário</Text>
           <TextInput
             style={styles.commentInput}
-            placeholder="Comentário (opcional)"
+            placeholder="Digite um comentário (opcional)"
             placeholderTextColor="#999"
             value={comment}
             onChangeText={onCommentChange}
@@ -114,25 +154,37 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
             maxLength={500}
           />
 
+          <Text style={styles.sectionLabel}>Imagem</Text>
           <TouchableOpacity
             style={styles.imageButton}
             onPress={onTakeImage}
             disabled={uploading}
           >
+            <MaterialCommunityIcons 
+              name={image ? "camera" : "camera-plus"} 
+              size={20} 
+              color="#fff" 
+            />
             <Text style={styles.buttonText}>
               {image ? 'Alterar Imagem' : 'Adicionar Imagem'}
             </Text>
           </TouchableOpacity>
 
           {image && (
-            <Image
-              source={{ uri: image }}
-              style={styles.imagePreview}
-            />
+            <View style={styles.imageContainer}>
+              <Text style={styles.imageLabel}>Pré-visualização:</Text>
+              <Image
+                source={{ uri: image }}
+                style={styles.imagePreview}
+              />
+            </View>
           )}
 
           {uploading && (
-            <ActivityIndicator size="large" color="#0000ff" />
+            <View style={styles.uploadingContainer}>
+              <ActivityIndicator size="large" color="#007BFF" />
+              <Text style={styles.uploadingText}>Enviando imagem...</Text>
+            </View>
           )}
 
           <View style={styles.modalButtonContainer}>
@@ -145,100 +197,189 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={[styles.modalButton, styles.modalButtonConfirm]}
+              style={[
+                styles.modalButton, 
+                styles.modalButtonConfirm,
+                (!siteCode || !uf) && styles.buttonDisabled
+              ]}
               onPress={onConfirm}
-              disabled={uploading}
+              disabled={uploading || !siteCode || !uf}
             >
-              <Text style={styles.modalButtonText}>Confirmar</Text>
+              <Text style={styles.modalButtonText}>
+                {uploading ? 'Enviando...' : 'Confirmar'}
+              </Text>
             </TouchableOpacity>
           </View>
+
+          {/* Informação sobre campos obrigatórios */}
+          <Text style={styles.requiredInfo}>
+            * Campos obrigatórios: Sigla e UF
+          </Text>
         </ScrollView>
       </View>
     </View>
   );
 };
 
-// Estilos do componente
+// Estilos do componente atualizados
 const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   modalContent: {
-    width: 300,
-    maxHeight: '80%', // Limita a altura máxima do modal
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '90%',
     padding: 20,
     backgroundColor: '#fff',
-    borderRadius: 10,
+    borderRadius: 15,
     shadowColor: '#000',
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.3,
     shadowRadius: 10,
-    elevation: 5,
+    elevation: 8,
   },
   scrollContent: {
     flexGrow: 1,
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 15,
+    marginBottom: 20,
     textAlign: 'center',
+    color: '#333',
+  },
+  sectionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 5,
+    color: '#333',
   },
   modalInput: {
-    height: 40,
-    borderColor: '#ccc',
+    height: 45,
+    borderColor: '#ddd',
     borderWidth: 1,
-    borderRadius: 5,
-    padding: 10,
-    marginBottom: 10,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginBottom: 15,
+    backgroundColor: '#f9f9f9',
+    fontSize: 16,
   },
   commentInput: {
     height: 100,
-    borderColor: '#ccc',
+    borderColor: '#ddd',
     borderWidth: 1,
-    borderRadius: 5,
-    padding: 10,
-    marginBottom: 10,
-    textAlignVertical: 'top', // Para alinhar o texto no topo no Android
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 15,
+    textAlignVertical: 'top',
+    backgroundColor: '#f9f9f9',
+    fontSize: 16,
   },
   pickerContainerUF: {
-    borderColor: '#ccc',
+    borderColor: '#ddd',
     borderWidth: 1,
-    borderRadius: 5,
-    marginBottom: 10,
+    borderRadius: 8,
+    marginBottom: 15,
+    backgroundColor: '#f9f9f9',
+    overflow: 'hidden',
   },
   ufPicker: {
     height: 50,
-    width: '100%',
+  },
+  autoDetectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#28a745',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  autoDetectButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    marginLeft: 8,
+    fontWeight: 'bold',
   },
   imageButton: {
-    backgroundColor: '#007BFF',
-    borderRadius: 5,
-    padding: 10,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007BFF',
+    borderRadius: 8,
+    padding: 12,
     marginBottom: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   buttonText: {
     color: '#fff',
+    fontSize: 16,
+    marginLeft: 8,
+    fontWeight: '600',
+  },
+  imageContainer: {
+    marginBottom: 15,
+  },
+  imageLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 5,
+    color: '#333',
   },
   imagePreview: {
     width: '100%',
     height: 150,
-    borderRadius: 5,
-    marginBottom: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  uploadingContainer: {
+    alignItems: 'center',
+    marginBottom: 15,
+    padding: 10,
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+  },
+  uploadingText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#666',
   },
   modalButtonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 15,
+    marginTop: 10,
+    marginBottom: 5,
   },
   modalButton: {
     flex: 1,
     marginHorizontal: 5,
-    padding: 10,
-    borderRadius: 5,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   modalButtonCancel: {
     backgroundColor: '#dc3545',
@@ -246,9 +387,21 @@ const styles = StyleSheet.create({
   modalButtonConfirm: {
     backgroundColor: '#28a745',
   },
+  buttonDisabled: {
+    backgroundColor: '#6c757d',
+    opacity: 0.6,
+  },
   modalButtonText: {
     color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  requiredInfo: {
+    fontSize: 12,
+    color: '#666',
     textAlign: 'center',
+    marginTop: 10,
+    fontStyle: 'italic',
   },
 });
 

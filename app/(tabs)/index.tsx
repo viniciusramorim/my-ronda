@@ -1,4 +1,5 @@
 import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, ActivityIndicator, Linking } from 'react-native';
+import { geohashForLocation, geohashQueryBounds, distanceBetween } from 'geofire-common';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -46,6 +47,23 @@ interface PontoColeta {
   imageUrl?: string;
   latitude: number; // ← Adicione isso
   longitude: number; // ← Adicione isso
+}
+
+interface Site {
+  id: string;
+  nome: string;
+  endereco: string;
+  latitude: number;
+  longitude: number;
+  raio: number;
+  uf: string;
+  regional: string;
+  status: string;
+  createdBy: string;
+  idOriginalPerimetro: string;
+  dataInicio: any;
+  dataFim: any | null;
+  geohash?: string; // ← Adicione este campo
 }
 
 // Definição da tarefa de localização em background
@@ -151,6 +169,18 @@ export default function HomeScreen() {
   const [carregandoRotas, setCarregandoRotas] = useState(false);
   const [estaProximoDoPonto, setEstaProximoDoPonto] = useState(false);
   const [distanciaAtual, setDistanciaAtual] = useState<number>(0);
+  const [sitesProximosEncontrados, setSitesProximosEncontrados] = useState<Site[]>([]);
+  const [mostrarSelecaoSites, setMostrarSelecaoSites] = useState(false);
+  const [mostrandoAlertaDetecao, setMostrandoAlertaDetecao] = useState(false);
+
+  const selecionarSite = (site: Site) => {
+    setSiteCode(site.nome);
+    setUf(site.uf);
+    setMotivo('ronda_em_site');
+    setMostrarSelecaoSites(false);
+    setMostrandoAlertaDetecao(false);
+    setShowCheckpointModal(true);
+  };
 
   // Verificar e solicitar permissões
   const checkAndRequestPermissions = useCallback(async () => {
@@ -368,13 +398,6 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // Efeito para salvar estado da rota quando mudar
-  useEffect(() => {
-    if (isTracking && (rotaAtiva || modoRota)) {
-      salvarEstadoRota();
-    }
-  }, [rotaAtiva, modoRota, isTracking, salvarEstadoRota]);
-
   // Iniciar monitoramento de localização - ATUALIZADA
   const startLocationTracking = useCallback(async (rondaId: string, userId: string) => {
     try {
@@ -530,6 +553,13 @@ export default function HomeScreen() {
     }
   }, [carregarCheckpoints, startLocationTracking, uid]);
 
+  // Efeito para salvar estado da rota quando mudar
+  useEffect(() => {
+    if (isTracking && (rotaAtiva || modoRota)) {
+      salvarEstadoRota();
+    }
+  }, [rotaAtiva, modoRota, isTracking, salvarEstadoRota]);
+
   // Lidar com mudanças no estado do app
   useEffect(() => {
     const handleAppStateChange = async (nextAppState: string) => {
@@ -620,6 +650,23 @@ export default function HomeScreen() {
       }
     }
   }, [location, proximoPonto, isTracking, modoRota]);
+
+  // Efeito para limpar estados quando modais forem fechados
+  useEffect(() => {
+    // Se o modal de seleção de sites foi fechado, limpar o alerta de detecção
+    if (!mostrarSelecaoSites && !showCheckpointModal) {
+      setMostrandoAlertaDetecao(false);
+    }
+  }, [mostrarSelecaoSites, showCheckpointModal]);
+
+  // Efeito para limpar tudo quando a ronda for parada
+  useEffect(() => {
+    if (!isTracking) {
+      setMostrandoAlertaDetecao(false);
+      setMostrarSelecaoSites(false);
+      setSitesProximosEncontrados([]);
+    }
+  }, [isTracking]);
 
   // Tirar foto
   const takeImage = async () => {
@@ -944,9 +991,84 @@ export default function HomeScreen() {
       return;
     }
 
+    // Se estiver no modo livre e o motivo for "ronda_em_site", detectar site automaticamente
+    if (modoRota === 'livre' && motivo === 'ronda_em_site' && !proximoPonto) {
+      try {
+        // Usar um estado para controlar o alerta em vez de Alert.alert diretamente
+        setMostrandoAlertaDetecao(true);
+
+        // USAR A NOVA FUNÇÃO COM GEOHASH - buscar múltiplos sites
+        const sitesProximos = await encontrarSitesProximosComGeohash(
+          location.coords.latitude,
+          location.coords.longitude,
+          10 // Buscar até 10 sites
+        );
+
+        // Fechar o alerta de detecção
+        setMostrandoAlertaDetecao(false);
+
+        if (sitesProximos.length > 0) {
+          // Salvar os sites encontrados no estado
+          setSitesProximosEncontrados(sitesProximos);
+
+          if (sitesProximos.length === 1) {
+            // Se só tem um site, usar automaticamente
+            const siteProximo = sitesProximos[0];
+            setSiteCode(siteProximo.nome);
+            setUf(siteProximo.uf);
+            setMotivo('ronda_em_site');
+
+            const distancia = distanceBetween(
+              [siteProximo.latitude, siteProximo.longitude],
+              [location.coords.latitude, location.coords.longitude]
+            );
+
+            Alert.alert(
+              'Site Detectado',
+              `Site mais próximo encontrado:\n\n${siteProximo.nome}-${siteProximo.uf}\n${siteProximo.endereco}\n\nDistância: ${distancia.toFixed(2)}km`,
+              [
+                {
+                  text: 'Usar Outro Site',
+                  style: 'cancel',
+                  onPress: () => setShowCheckpointModal(true)
+                },
+                {
+                  text: 'Confirmar',
+                  onPress: () => setShowCheckpointModal(true)
+                }
+              ]
+            );
+          } else {
+            // Se tem múltiplos sites, mostrar modal de seleção
+            setMostrarSelecaoSites(true);
+          }
+        } else {
+          Alert.alert(
+            'Nenhum Site Próximo',
+            'Não foi encontrado nenhum site ativo dentro de 10km da sua localização. Você pode registrar manualmente.',
+            [
+              {
+                text: 'Registrar Manualmente',
+                onPress: () => setShowCheckpointModal(true)
+              },
+              {
+                text: 'Cancelar',
+                style: 'cancel'
+              }
+            ]
+          );
+        }
+        return;
+      } catch (error) {
+        console.error('Erro ao detectar site:', error);
+        // Garantir que o alerta seja fechado em caso de erro
+        setMostrandoAlertaDetecao(false);
+        setShowCheckpointModal(true);
+      }
+    }
+
+    // Comportamento original para outros casos
     if (proximoPonto) {
-      // SEM verificação de proximidade - permite registrar em qualquer lugar
-      // Apenas mostra um aviso informativo sobre a distância
       if (proximoPonto.latitude && proximoPonto.longitude) {
         const distancia = calcularDistancia(
           location.coords.latitude,
@@ -957,8 +1079,7 @@ export default function HomeScreen() {
 
         setDistanciaAtual(distancia);
 
-        // Mostra aviso informativo (mas não impede o registro)
-        if (distancia > 0.1) { // Mais de 100 metros
+        if (distancia > 0.1) {
           Alert.alert(
             'Aviso - Distância do Local',
             `Você está a ${distancia.toFixed(2)} km do ponto ${proximoPonto.sigla}-${proximoPonto.uf}. 
@@ -972,7 +1093,6 @@ export default function HomeScreen() {
               {
                 text: 'Registrar',
                 onPress: () => {
-                  // Continua com o registro mesmo longe
                   setSiteCode(proximoPonto.sigla);
                   setUf(proximoPonto.uf);
                   setMotivo('ronda_em_site');
@@ -981,17 +1101,15 @@ export default function HomeScreen() {
               }
             ]
           );
-          return; // Sai da função para aguardar a decisão do usuário
+          return;
         }
       }
 
-      // Usar dados do ponto da rota ativa (se estiver próximo ou usuário confirmou)
       setSiteCode(proximoPonto.sigla);
       setUf(proximoPonto.uf);
       setMotivo('ronda_em_site');
       setShowCheckpointModal(true);
     } else {
-      // Comportamento normal quando não há rota ativa (modo livre)
       if (motivo === 'ronda_em_site') {
         setShowCheckpointModal(true);
       } else if (motivo === 'troca_de_veiculo') {
@@ -1262,6 +1380,155 @@ export default function HomeScreen() {
     );
   };
 
+  // Atualize a função de busca manual para usar Geohash
+  const buscarSitesProximosManualmente = async () => {
+    if (!location) {
+      Alert.alert('Erro', 'Localização não disponível.');
+      return;
+    }
+
+    try {
+      setMostrandoAlertaDetecao(true);
+
+      // USAR A NOVA FUNÇÃO COM GEOHASH
+      const sitesProximos = await encontrarSitesProximosComGeohash(
+        location.coords.latitude,
+        location.coords.longitude,
+        10 // Buscar mais resultados
+      );
+
+      setMostrandoAlertaDetecao(false);
+
+      if (sitesProximos.length > 0) {
+        // Usar o mesmo modal de seleção
+        setSitesProximosEncontrados(sitesProximos);
+        setMostrarSelecaoSites(true);
+      } else {
+        Alert.alert(
+          'Nenhum Site Encontrado',
+          'Não há sites ativos dentro de 10km da sua localização.'
+        );
+      }
+    } catch (error) {
+      console.error('Erro ao buscar sites:', error);
+      setMostrandoAlertaDetecao(false);
+      Alert.alert('Erro', 'Não foi possível buscar sites próximos.');
+    }
+  };
+
+  // Função para encontrar múltiplos sites próximos com Geohash
+  const encontrarSitesProximosComGeohash = async (latitude: number, longitude: number, limite: number = 10): Promise<Site[]> => {
+    try {
+      const center = [latitude, longitude];
+      const radiusInM = 10 * 1000; // 10km em metros
+      const bounds = geohashQueryBounds(center, radiusInM);
+
+      const promises = bounds.map((bound) => {
+        const mapaDeCalorRef = collection(otherDb, 'mapaDeCalor');
+        const q = query(
+          mapaDeCalorRef,
+          where('geohash', '>=', bound[0]),
+          where('geohash', '<=', bound[1]),
+          where('status', '==', 'ativo')
+        );
+        return getDocs(q);
+      });
+
+      const snapshots = await Promise.all(promises);
+
+      const sitesProximos: Site[] = [];
+
+      for (const snapshot of snapshots) {
+        for (const doc of snapshot.docs) {
+          const siteData = doc.data();
+
+          if (siteData.latitude && siteData.longitude) {
+            const lat = siteData.latitude;
+            const lng = siteData.longitude;
+            const distanceInKm = distanceBetween([lat, lng], center);
+
+            if (distanceInKm <= 10) {
+              sitesProximos.push({
+                id: doc.id,
+                nome: siteData.nome || '',
+                endereco: siteData.endereco || '',
+                latitude: lat,
+                longitude: lng,
+                raio: siteData.raio || 0,
+                uf: siteData.uf || '',
+                regional: siteData.regional || '',
+                status: siteData.status || '',
+                createdBy: siteData.createdBy || '',
+                idOriginalPerimetro: siteData.idOriginalPerimetro || '',
+                dataInicio: siteData.dataInicio || null,
+                dataFim: siteData.dataFim || null,
+                geohash: siteData.geohash || ''
+              });
+            }
+          }
+        }
+      }
+
+      // Ordenar por distância e limitar resultados
+      sitesProximos.sort((a, b) => {
+        const distA = distanceBetween([a.latitude, a.longitude], center);
+        const distB = distanceBetween([b.latitude, b.longitude], center);
+        return distA - distB;
+      });
+
+      return sitesProximos.slice(0, limite);
+
+    } catch (error) {
+      console.error('Erro ao buscar múltiplos sites com Geohash:', error);
+
+      // Fallback
+      const mapaDeCalorRef = collection(otherDb, 'mapaDeCalor');
+      const q = query(mapaDeCalorRef, where('status', '==', 'ativo'));
+      const querySnapshot = await getDocs(q);
+
+      const sites: Site[] = [];
+
+      querySnapshot.forEach((doc) => {
+        const siteData = doc.data();
+        if (siteData.latitude && siteData.longitude) {
+          const distancia = calcularDistancia(
+            latitude,
+            longitude,
+            siteData.latitude,
+            siteData.longitude
+          );
+
+          if (distancia <= 10) {
+            sites.push({
+              id: doc.id,
+              nome: siteData.nome || '',
+              endereco: siteData.endereco || '',
+              latitude: siteData.latitude,
+              longitude: siteData.longitude,
+              raio: siteData.raio || 0,
+              uf: siteData.uf || '',
+              regional: siteData.regional || '',
+              status: siteData.status || '',
+              createdBy: siteData.createdBy || '',
+              idOriginalPerimetro: siteData.idOriginalPerimetro || '',
+              dataInicio: siteData.dataInicio || null,
+              dataFim: siteData.dataFim || null,
+              geohash: siteData.geohash || ''
+            });
+          }
+        }
+      });
+
+      sites.sort((a, b) => {
+        const distA = calcularDistancia(latitude, longitude, a.latitude, a.longitude);
+        const distB = calcularDistancia(latitude, longitude, b.latitude, b.longitude);
+        return distA - distB;
+      });
+
+      return sites.slice(0, limite);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
@@ -1440,7 +1707,104 @@ export default function HomeScreen() {
             onCancel={() => setShowCheckpointModal(false)}
             onConfirm={confirmCheckpoint}
             uploading={uploading}
+            // Novas props adicionadas
+            onAutoDetect={buscarSitesProximosManualmente}
+            location={location}
+            modoRota={modoRota}
           />
+        </Modal>
+
+        {/* Modal de Seleção de Sites Próximos */}
+        <Modal visible={mostrarSelecaoSites} transparent={true} animationType="slide">
+          <View style={styles.modalContainer}>
+            <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+              <Text style={styles.modalTitle}>Selecione o Site</Text>
+              <Text style={styles.modalSubtitle}>
+                {sitesProximosEncontrados.length} site(s) encontrado(s) próximos a você
+              </Text>
+
+              <ScrollView style={styles.sitesList}>
+                {sitesProximosEncontrados.map((site, index) => {
+                  const distancia = distanceBetween(
+                    [site.latitude, site.longitude],
+                    [location.coords.latitude, location.coords.longitude]
+                  );
+
+                  return (
+                    <TouchableOpacity
+                      key={site.id}
+                      style={[
+                        styles.siteItem,
+                        index === 0 && styles.siteItemMaisProximo
+                      ]}
+                      onPress={() => selecionarSite(site)}
+                    >
+                      <View style={styles.siteInfo}>
+                        <Text style={styles.siteNome}>
+                          {site.nome}-{site.uf}
+                          {index === 0 && ' 🏆'}
+                        </Text>
+                        <Text style={styles.siteEndereco}>{site.endereco}</Text>
+                        <Text style={styles.siteDistancia}>
+                          📍 {distancia.toFixed(2)} km de distância
+                        </Text>
+                        {site.regional && (
+                          <Text style={styles.siteRegional}>🏢 {site.regional}</Text>
+                        )}
+                      </View>
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={24}
+                        color="#666"
+                      />
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              <TouchableOpacity
+                style={[styles.button, styles.buttonCancel, { marginTop: 10 }]}
+                onPress={() => {
+                  setMostrarSelecaoSites(false);
+                  setShowCheckpointModal(true);
+                }}
+              >
+                <Text style={styles.buttonText}>Registrar Site Manualmente</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.button, styles.buttonCancel, { marginTop: 5 }]}
+                onPress={() => {
+                  setMostrarSelecaoSites(false);
+                  setMostrandoAlertaDetecao(false); // Limpar o alerta
+                }}
+              >
+                <Text style={styles.buttonText}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Modal de Detecção de Sites */}
+        <Modal visible={mostrandoAlertaDetecao} transparent={true} animationType="fade">
+          <View style={styles.modalContainer}>
+            <View style={[styles.modalContent, { padding: 30 }]}>
+              <ActivityIndicator size="large" color="#007BFF" />
+              <Text style={[styles.modalTitle, { marginTop: 20, textAlign: 'center' }]}>
+                Detectando Site
+              </Text>
+              <Text style={[styles.modalSubtitle, { textAlign: 'center' }]}>
+                Procurando sites próximos na sua localização...
+              </Text>
+
+              <TouchableOpacity
+                style={[styles.button, styles.buttonCancel, { marginTop: 20 }]}
+                onPress={() => setMostrandoAlertaDetecao(false)}
+              >
+                <Text style={styles.buttonText}>Cancelar Busca</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </Modal>
 
         {/* Troca Veiculo Modal */}

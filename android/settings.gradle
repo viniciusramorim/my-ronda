@@ -21,7 +21,7 @@ extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
   }
 }
 
-rootProject.name = 'my-ronda'
+rootProject.name = 'Ronda Digital'
 
 dependencyResolutionManagement {
   versionCatalogs {
