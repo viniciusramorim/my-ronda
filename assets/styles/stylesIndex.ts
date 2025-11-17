@@ -465,45 +465,6 @@ const styles = StyleSheet.create({
         borderRadius: 10,
         marginBottom: 10,
     },
-    //styles offline
-    statusConexaoContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 5,
-        marginHorizontal: 0,
-        marginVertical: 20,
-      },
-    statusConexaoText: {
-        color: '#fff',
-        fontSize: 12,
-        fontWeight: 'bold',
-        marginLeft: 4,
-    },
-    pendentesBadge: {
-        backgroundColor: '#ffc107',
-        color: '#000',
-        fontSize: 10,
-        fontWeight: 'bold',
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 10,
-        marginLeft: 4,
-    },
-    offlineWarning: {
-        backgroundColor: '#fff3cd',
-        borderColor: '#ffeaa7',
-        borderWidth: 1,
-        padding: 12,
-        margin: 16,
-        borderRadius: 8,
-    },
-    offlineWarningText: {
-        color: '#856404',
-        fontSize: 14,
-        textAlign: 'center',
-    }
 });
 
 export default styles;
