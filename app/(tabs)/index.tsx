@@ -66,6 +66,23 @@ interface Site {
   geohash?: string; // ← Adicione este campo
 }
 
+interface OfflineData {
+  ronda: any;
+  checkpoints: Checkpoint[];
+  rotaAtiva: RotaPreDefinida | null;
+  modoRota: 'livre' | 'predefinida' | null;
+  ultimaSincronizacao: string | null;
+  pendentesSincronizacao: PendenteSincronizacao[];
+}
+
+interface PendenteSincronizacao {
+  id: string;
+  tipo: 'checkpoint' | 'ronda' | 'troca_veiculo' | 'panico';
+  dados: any;
+  timestamp: string;
+  tentativas: number;
+}
+
 // Definição da tarefa de localização em background
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
@@ -172,6 +189,12 @@ export default function HomeScreen() {
   const [sitesProximosEncontrados, setSitesProximosEncontrados] = useState<Site[]>([]);
   const [mostrarSelecaoSites, setMostrarSelecaoSites] = useState(false);
   const [mostrandoAlertaDetecao, setMostrandoAlertaDetecao] = useState(false);
+  // Adicione estes estados após os estados existentes
+  const [isOnline, setIsOnline] = useState<boolean>(true);
+  const [offlineData, setOfflineData] = useState<OfflineData | null>(null);
+  const [sincronizando, setSincronizando] = useState<boolean>(false);
+  const [ultimaSincronizacao, setUltimaSincronizacao] = useState<string | null>(null);
+
 
   const selecionarSite = (site: Site) => {
     setSiteCode(site.nome);
@@ -591,15 +614,21 @@ export default function HomeScreen() {
     const initialize = async () => {
       await registerBackgroundTasks();
       await checkAndRequestPermissions();
-      await userData(); // ← Isso carrega o UID primeiro
-      await carregarRotasPreDefinidas(); // ← Depois carrega as rotas
-      await verificarRondaAtiva();
+      await userData();
+      await carregarRotasPreDefinidas();
+
+      // Primeiro tenta verificar ronda ativa online, depois offline
+      const rondaAtiva = await verificarRondaAtiva();
+      if (!rondaAtiva) {
+        await recuperarRondaOffline();
+      }
+
+      await verificarConexao();
     };
 
     initialize();
 
     return () => {
-      // Limpeza
       if (subscription) {
         subscription.remove();
       }
@@ -776,7 +805,7 @@ export default function HomeScreen() {
     }
   };
 
-  // Confirmar início da ronda - ATUALIZADA
+  // 1. Modificar confirmStartTracking para suporte offline
   const confirmStartTracking = async () => {
     if (!kmInicial || !placaInicial) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
@@ -790,9 +819,6 @@ export default function HomeScreen() {
 
     try {
       const novaRondaId = `ronda_${new Date().getTime()}`;
-      const rondaRef = doc(otherDb, 'rondas', novaRondaId);
-      const userRef = doc(otherDb, 'usuarios', uid);
-
       const imageUrl = await uploadImage();
 
       const rondaData = {
@@ -814,8 +840,39 @@ export default function HomeScreen() {
         }),
       };
 
-      await setDoc(rondaRef, rondaData);
+      let sucessoOnline = false;
 
+      if (isOnline) {
+        try {
+          // Tentar salvar online
+          const rondaRef = doc(otherDb, 'rondas', novaRondaId);
+          await setDoc(rondaRef, rondaData);
+          sucessoOnline = true;
+          console.log('Ronda salva online com sucesso');
+        } catch (onlineError) {
+          console.error('Erro ao salvar online, continuando offline:', onlineError);
+          sucessoOnline = false;
+        }
+      }
+
+      // Salvar offline em qualquer caso (backup)
+      await salvarDadosOffline({
+        ronda: { ...rondaData, id: novaRondaId },
+        modoRota,
+        rotaAtiva,
+        checkpoints: []
+      });
+
+      // Adicionar como pendente se não conseguiu salvar online
+      if (!sucessoOnline) {
+        await adicionarPendenteSincronizacao('ronda', {
+          tipo: 'inicio',
+          rondaId: novaRondaId,
+          rondaData
+        });
+      }
+
+      // Configurar estados locais
       setRondaId(novaRondaId);
       setRondaDetails(rondaData);
       setIsTracking(true);
@@ -823,24 +880,121 @@ export default function HomeScreen() {
       setCheckpoints([]);
       setImage(null);
 
+      // Salvar no AsyncStorage
       await AsyncStorage.setItem('rondaId', novaRondaId);
-      await salvarEstadoRota(); // Salvar estado da rota
+      await salvarEstadoRota();
 
-      // Iniciar monitoramento de localização
-      await startLocationTracking(novaRondaId, uid);
+      // Iniciar monitoramento de localização apenas se online
+      if (sucessoOnline) {
+        try {
+          await startLocationTracking(novaRondaId, uid);
+        } catch (locationError) {
+          console.error('Erro ao iniciar monitoramento de localização:', locationError);
+          // Continuar mesmo sem monitoramento de localização
+        }
+      }
 
-      // Mostrar mensagem conforme o modo
+      // Preparar mensagem de sucesso
+      let mensagem = '';
       if (modoRota === 'predefinida' && rotaAtiva && proximoPonto) {
+        mensagem = `Rota "${rotaAtiva.nome}" iniciada. Primeiro ponto: ${proximoPonto.sigla}-${proximoPonto.uf}`;
+      } else {
+        mensagem = 'Ronda Iniciada. Modo de rota livre ativado.';
+      }
+
+      // Adicionar informação sobre o status da conexão
+      if (!sucessoOnline) {
+        mensagem += '\n\n📱 Modo Offline - Os dados serão sincronizados quando a conexão voltar.';
+
+        // Mostrar alerta informativo sobre modo offline
         Alert.alert(
-          'Rota Iniciada',
-          `Rota "${rotaAtiva.nome}" iniciada. Primeiro ponto: ${proximoPonto.sigla}-${proximoPonto.uf}`
+          'Ronda Iniciada (Offline)',
+          `${mensagem}\n\nTodos os dados estão sendo salvos localmente e serão sincronizados automaticamente quando a conexão for restaurada.`,
+          [{ text: 'Entendi', style: 'default' }]
         );
       } else {
-        Alert.alert('Ronda Iniciada', 'Modo de rota livre ativado. Você pode registrar checkpoints livremente.');
+        Alert.alert('Ronda Iniciada', mensagem);
       }
+
+      // Atualizar interface se estiver offline
+      if (!sucessoOnline) {
+        setIsOnline(false);
+      }
+
     } catch (error) {
-      console.error('Erro ao iniciar rastreamento:', error);
-      Alert.alert('Erro', 'Não foi possível iniciar o rastreamento.');
+      console.error('Erro crítico ao iniciar rastreamento:', error);
+
+      // Fallback completo offline em caso de erro
+      if (!isOnline || error instanceof Error) {
+        try {
+          const novaRondaId = `ronda_offline_${new Date().getTime()}`;
+          const imageUrl = await uploadImage().catch(() => null); // Tentar upload, mas continuar mesmo se falhar
+
+          const rondaDataOffline = {
+            nomeRonda: `Ronda_Offline_${new Date().toLocaleString()}`,
+            inicio: new Date().toISOString(),
+            kmInicial: parseFloat(kmInicial),
+            placaInicial,
+            ultimaLocalizacao: null,
+            uid: uid,
+            timestamp: new Date().toISOString(),
+            imagemInicial: imageUrl,
+            modoRota: modoRota,
+            offline: true, // Marcar como offline
+            ...(rotaAtiva && {
+              rotaPreDefinida: {
+                id: rotaAtiva.id,
+                nome: rotaAtiva.nome,
+                pontosTotais: rotaAtiva.pontos.length
+              }
+            }),
+          };
+
+          // Salvar localmente
+          await salvarDadosOffline({
+            ronda: { ...rondaDataOffline, id: novaRondaId },
+            modoRota,
+            rotaAtiva,
+            checkpoints: []
+          });
+
+          // Adicionar como pendente
+          await adicionarPendenteSincronizacao('ronda', {
+            tipo: 'inicio',
+            rondaId: novaRondaId,
+            rondaData: rondaDataOffline
+          });
+
+          // Configurar estados
+          setRondaId(novaRondaId);
+          setRondaDetails(rondaDataOffline);
+          setIsTracking(true);
+          setShowKmModal(null);
+          setCheckpoints([]);
+          setImage(null);
+
+          await AsyncStorage.setItem('rondaId', novaRondaId);
+          await salvarEstadoRota();
+
+          Alert.alert(
+            'Ronda Iniciada (Modo Offline)',
+            'A ronda foi iniciada em modo offline devido a problemas de conexão. Todos os dados estão sendo salvos localmente e serão sincronizados quando a conexão voltar.',
+            [{ text: 'Entendi', style: 'default' }]
+          );
+
+        } catch (fallbackError) {
+          console.error('Erro no fallback offline:', fallbackError);
+          Alert.alert(
+            'Erro Crítico',
+            'Não foi possível iniciar a ronda. Verifique sua conexão e tente novamente.'
+          );
+        }
+      } else {
+        Alert.alert(
+          'Erro',
+          'Não foi possível iniciar o rastreamento. Tente novamente.'
+        );
+      }
     }
   };
 
@@ -901,7 +1055,7 @@ export default function HomeScreen() {
     }
 
     try {
-      // Parar subscription do foreground primeiro
+      // Parar serviços de localização
       if (subscription) {
         subscription.remove();
         setSubscription(null);
@@ -911,45 +1065,51 @@ export default function HomeScreen() {
 
       await gerenciarTarefaBackground('parar');
 
-      if (rondaId && uid) {
+      const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
+      const imageUrl = await uploadImage();
+      const pontosConcluidos = rotaAtiva ? rotaAtiva.pontos.filter(p => p.concluido).length : 0;
+
+      const updateData = {
+        fim: new Date().toISOString(),
+        kmFinal: parseFloat(kmFinal),
+        placaFinal,
+        distanciaPercorrida,
+        imagemFinal: imageUrl,
+        ...(rotaAtiva && {
+          rotaPreDefinida: {
+            id: rotaAtiva.id,
+            nome: rotaAtiva.nome,
+            pontosTotais: rotaAtiva.pontos.length,
+            pontosConcluidos: pontosConcluidos
+          }
+        })
+      };
+
+      if (isOnline && rondaId && uid) {
+        // Tentar salvar online
         const rondaRef = doc(otherDb, 'rondas', rondaId);
         const userRef = doc(otherDb, 'usuarios', uid);
 
-        const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
-        const imageUrl = await uploadImage();
-
-        const pontosConcluidos = rotaAtiva ? rotaAtiva.pontos.filter(p => p.concluido).length : 0;
-
         await Promise.all([
-          updateDoc(rondaRef, {
-            fim: new Date().toISOString(),
-            kmFinal: parseFloat(kmFinal),
-            placaFinal,
-            distanciaPercorrida,
-            imagemFinal: imageUrl,
-            ...(rotaAtiva && {
-              rotaPreDefinida: {
-                id: rotaAtiva.id,
-                nome: rotaAtiva.nome,
-                pontosTotais: rotaAtiva.pontos.length,
-                pontosConcluidos: pontosConcluidos
-              }
-            })
-          }),
+          updateDoc(rondaRef, updateData),
           updateDoc(userRef, {
             status_ronda: "Parado"
           })
         ]);
-
-        setRondaDetails((prev: any) => ({
-          ...prev,
-          fim: new Date().toISOString(),
-          kmFinal: parseFloat(kmFinal),
-          placaFinal,
-          distanciaPercorrida,
-          imagemFinal: imageUrl,
-        }));
+      } else if (rondaId) {
+        // Salvar como pendente se offline
+        await adicionarPendenteSincronizacao('ronda', {
+          tipo: 'fim',
+          rondaId,
+          updateData
+        });
       }
+
+      // Atualizar estado local
+      setRondaDetails((prev: any) => ({
+        ...prev,
+        ...updateData,
+      }));
 
       // Limpar estado
       setTimeout(() => {
@@ -969,19 +1129,21 @@ export default function HomeScreen() {
 
       await AsyncStorage.removeItem('rondaId');
       await limparEstadoRota();
+      await limparDadosOffline();
 
-      Alert.alert('Sucesso', 'Ronda finalizada com sucesso!');
+      Alert.alert(
+        'Sucesso',
+        `Ronda finalizada com sucesso!${!isOnline ? ' Dados serão sincronizados quando a conexão voltar.' : ''}`
+      );
 
     } catch (error) {
       console.error('Erro ao parar rastreamento:', error);
 
-      // Mesmo se der erro na parada do background, continuar com o processo
-      if (error instanceof Error && error.message.includes('TaskNotFoundException')) {
-        console.log('Tarefa já foi removida, continuando processo...');
-        // Continuar com o processo mesmo se a tarefa não for encontrada
-      } else {
-        Alert.alert('Aviso', 'Ronda finalizada, mas houve um problema ao parar alguns serviços.');
-      }
+      // Mesmo com erro, a ronda é finalizada localmente
+      Alert.alert(
+        'Ronda finalizada',
+        'Ronda finalizada localmente. Os dados serão sincronizados quando possível.'
+      );
     }
   };
 
@@ -1529,10 +1691,351 @@ export default function HomeScreen() {
     }
   };
 
+  // Funções para gerenciar o modo offline
+  const salvarDadosOffline = useCallback(async (dados: Partial<OfflineData>) => {
+    try {
+      const dadosAtuais = await AsyncStorage.getItem('offlineData');
+      const parsedData: OfflineData = dadosAtuais ? JSON.parse(dadosAtuais) : {
+        ronda: null,
+        checkpoints: [],
+        rotaAtiva: null,
+        modoRota: null,
+        ultimaSincronizacao: null,
+        pendentesSincronizacao: []
+      };
+
+      const novosDados = {
+        ...parsedData,
+        ...dados,
+        ultimaSincronizacao: new Date().toISOString()
+      };
+
+      await AsyncStorage.setItem('offlineData', JSON.stringify(novosDados));
+      setOfflineData(novosDados);
+      console.log('Dados salvos offline:', Object.keys(dados));
+    } catch (error) {
+      console.error('Erro ao salvar dados offline:', error);
+    }
+  }, []);
+
+  const carregarDadosOffline = useCallback(async () => {
+    try {
+      const dados = await AsyncStorage.getItem('offlineData');
+      if (dados) {
+        const parsedData: OfflineData = JSON.parse(dados);
+        setOfflineData(parsedData);
+        return parsedData;
+      }
+      return null;
+    } catch (error) {
+      console.error('Erro ao carregar dados offline:', error);
+      return null;
+    }
+  }, []);
+
+  const adicionarPendenteSincronizacao = useCallback(async (tipo: PendenteSincronizacao['tipo'], dados: any) => {
+    try {
+      const pendente: PendenteSincronizacao = {
+        id: `pendente_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        tipo,
+        dados,
+        timestamp: new Date().toISOString(),
+        tentativas: 0
+      };
+
+      const dadosAtuais = await AsyncStorage.getItem('offlineData');
+      const parsedData: OfflineData = dadosAtuais ? JSON.parse(dadosAtuais) : {
+        ronda: null,
+        checkpoints: [],
+        rotaAtiva: null,
+        modoRota: null,
+        ultimaSincronizacao: null,
+        pendentesSincronizacao: []
+      };
+
+      const novosDados = {
+        ...parsedData,
+        pendentesSincronizacao: [...parsedData.pendentesSincronizacao, pendente],
+        ultimaSincronizacao: new Date().toISOString()
+      };
+
+      await AsyncStorage.setItem('offlineData', JSON.stringify(novosDados));
+      setOfflineData(novosDados);
+
+      // Tentar sincronizar imediatamente se estiver online
+      if (isOnline) {
+        sincronizarDadosPendentes();
+      }
+
+      return pendente.id;
+    } catch (error) {
+      console.error('Erro ao adicionar pendente de sincronização:', error);
+    }
+  }, [isOnline]);
+
+  // Função para verificar conexão
+  const verificarConexao = useCallback(async () => {
+    try {
+      // Tentar fazer uma requisição simples para verificar conexão
+      const response = await fetch('https://www.google.com', {
+        method: 'HEAD',
+        timeout: 5000
+      });
+      const estaOnline = response.ok;
+      setIsOnline(estaOnline);
+
+      if (estaOnline && !isOnline) {
+        // Conexão recuperada - sincronizar dados pendentes
+        sincronizarDadosPendentes();
+      }
+
+      return estaOnline;
+    } catch (error) {
+      setIsOnline(false);
+      return false;
+    }
+  }, [isOnline]);
+
+  // Função para sincronizar dados pendentes
+  const sincronizarDadosPendentes = useCallback(async () => {
+    if (sincronizando || !isOnline) return;
+
+    setSincronizando(true);
+
+    try {
+      const dadosOffline = await carregarDadosOffline();
+      if (!dadosOffline || dadosOffline.pendentesSincronizacao.length === 0) {
+        setSincronizando(false);
+        return;
+      }
+
+      console.log(`Sincronizando ${dadosOffline.pendentesSincronizacao.length} itens pendentes...`);
+
+      const pendentesSucesso: string[] = [];
+      const pendentesErro: PendenteSincronizacao[] = [];
+
+      // Processar cada item pendente
+      for (const pendente of dadosOffline.pendentesSincronizacao) {
+        try {
+          let sucesso = false;
+
+          switch (pendente.tipo) {
+            case 'checkpoint':
+              sucesso = await sincronizarCheckpoint(pendente.dados);
+              break;
+            case 'ronda':
+              sucesso = await sincronizarRonda(pendente.dados);
+              break;
+            case 'troca_veiculo':
+              sucesso = await sincronizarTrocaVeiculo(pendente.dados);
+              break;
+            case 'panico':
+              sucesso = await sincronizarPanico(pendente.dados);
+              break;
+          }
+
+          if (sucesso) {
+            pendentesSucesso.push(pendente.id);
+          } else {
+            pendentesErro.push({
+              ...pendente,
+              tentativas: pendente.tentativas + 1
+            });
+          }
+        } catch (error) {
+          console.error(`Erro ao sincronizar pendente ${pendente.id}:`, error);
+          pendentesErro.push({
+            ...pendente,
+            tentativas: pendente.tentativas + 1
+          });
+        }
+      }
+
+      // Atualizar lista de pendentes
+      const novosDados = {
+        ...dadosOffline,
+        pendentesSincronizacao: pendentesErro,
+        ultimaSincronizacao: new Date().toISOString()
+      };
+
+      await AsyncStorage.setItem('offlineData', JSON.stringify(novosDados));
+      setOfflineData(novosDados);
+
+      if (pendentesSucesso.length > 0) {
+        console.log(`${pendentesSucesso.length} itens sincronizados com sucesso`);
+        Alert.alert('Sincronização', `${pendentesSucesso.length} itens sincronizados com sucesso`);
+      }
+
+      if (pendentesErro.length > 0) {
+        console.log(`${pendentesErro.length} itens com erro na sincronização`);
+      }
+
+      setUltimaSincronizacao(new Date().toISOString());
+
+    } catch (error) {
+      console.error('Erro na sincronização:', error);
+    } finally {
+      setSincronizando(false);
+    }
+  }, [isOnline, sincronizando, carregarDadosOffline]);
+
+  // Funções específicas de sincronização
+  const sincronizarCheckpoint = async (dados: any): Promise<boolean> => {
+    try {
+      const checkpointsRef = collection(otherDb, 'rondas', dados.rondaId, 'checkpoints');
+      await addDoc(checkpointsRef, dados.checkpoint);
+      return true;
+    } catch (error) {
+      console.error('Erro ao sincronizar checkpoint:', error);
+      return false;
+    }
+  };
+
+  const sincronizarRonda = async (dados: any): Promise<boolean> => {
+    try {
+      if (dados.tipo === 'inicio') {
+        const rondaRef = doc(otherDb, 'rondas', dados.rondaId);
+        await setDoc(rondaRef, dados.rondaData);
+      } else if (dados.tipo === 'fim') {
+        const rondaRef = doc(otherDb, 'rondas', dados.rondaId);
+        await updateDoc(rondaRef, dados.updateData);
+      }
+      return true;
+    } catch (error) {
+      console.error('Erro ao sincronizar ronda:', error);
+      return false;
+    }
+  };
+
+  const sincronizarTrocaVeiculo = async (dados: any): Promise<boolean> => {
+    try {
+      const rondaRef = doc(otherDb, 'rondas', dados.rondaId);
+      await updateDoc(rondaRef, dados.updateData);
+
+      const checkpointsRef = collection(otherDb, 'rondas', dados.rondaId, 'checkpoints');
+      await addDoc(checkpointsRef, dados.checkpointData);
+
+      return true;
+    } catch (error) {
+      console.error('Erro ao sincronizar troca de veículo:', error);
+      return false;
+    }
+  };
+
+  const sincronizarPanico = async (dados: any): Promise<boolean> => {
+    try {
+      const checkpointsRef = collection(otherDb, 'rondas', dados.rondaId, 'checkpoints');
+      await addDoc(checkpointsRef, dados.checkpointData);
+      return true;
+    } catch (error) {
+      console.error('Erro ao sincronizar pânico:', error);
+      return false;
+    }
+  };
+
+  const recuperarRondaOffline = useCallback(async () => {
+    try {
+      const dados = await carregarDadosOffline();
+      if (dados && dados.ronda) {
+        setRondaId(dados.ronda.id);
+        setRondaDetails(dados.ronda);
+        setIsTracking(true);
+        setModoRota(dados.modoRota);
+        setRotaAtiva(dados.rotaAtiva);
+        setCheckpoints(dados.checkpoints || []);
+
+        if (dados.rotaAtiva) {
+          const proximo = dados.rotaAtiva.pontos.find((p: PontoColeta) => !p.concluido);
+          setProximoPonto(proximo || null);
+        }
+
+        await AsyncStorage.setItem('rondaId', dados.ronda.id);
+
+        Alert.alert(
+          'Ronda Recuperada',
+          'Uma ronda em modo offline foi recuperada. Os dados serão sincronizados quando a conexão voltar.'
+        );
+
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Erro ao recuperar ronda offline:', error);
+      return false;
+    }
+  }, [carregarDadosOffline]);
+
+  // Função para limpar dados offline após sincronização bem-sucedida
+  const limparDadosOffline = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem('offlineData');
+      setOfflineData(null);
+    } catch (error) {
+      console.error('Erro ao limpar dados offline:', error);
+    }
+  }, []);
+
+  // Monitorar estado da conexão
+  useEffect(() => {
+    const interval = setInterval(verificarConexao, 30000); // Verificar a cada 30 segundos
+    verificarConexao(); // Verificar imediatamente
+
+    return () => clearInterval(interval);
+  }, [verificarConexao]);
+
+  // Carregar dados offline ao inicializar
+  useEffect(() => {
+    const carregarDados = async () => {
+      await carregarDadosOffline();
+    };
+    carregarDados();
+  }, [carregarDadosOffline]);
+
+  const StatusConexao = () => (
+    <View style={[
+      styles.statusConexaoContainer,
+      { borderColor: isOnline ? '#28a745' : '#dc3545',
+        borderWidth: 3,
+        borderRadius: 5 }
+    ]}>
+      <MaterialCommunityIcons
+        name={isOnline ? "wifi" : "wifi-off"}
+        size={16}
+        color={isOnline ? '#28a745' : '#dc3545'}
+      />
+      <Text style={[styles.statusConexaoText, {color: isOnline ? '#28a745' : '#dc3545'}]}>
+        {isOnline ? 'Online' : 'Offline'}
+      </Text>
+      {sincronizando && (
+        <ActivityIndicator size="small" color="#fff" style={{ marginLeft: 5 }} />
+      )}
+      {offlineData?.pendentesSincronizacao.length > 0 && (
+        <Text style={styles.pendentesBadge}>
+          {offlineData.pendentesSincronizacao.length}
+        </Text>
+      )}
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
+        <StatusConexao />
+
         <Text style={styles.welcomeText}>Bem-vindo(a), {user}.</Text>
+
+        {!isOnline && isTracking && (
+          <View style={styles.offlineWarning}>
+            <Text style={styles.offlineWarningText}>
+              ⚠️ Modo Offline - Seus dados estão sendo salvos localmente e serão sincronizados quando a conexão voltar
+            </Text>
+            {offlineData?.pendentesSincronizacao.length > 0 && (
+              <Text style={[styles.offlineWarningText, { fontSize: 12, marginTop: 4 }]}>
+                {offlineData.pendentesSincronizacao.length} item(s) pendente(s) de sincronização
+              </Text>
+            )}
+          </View>
+        )}
 
         {/* Seu botão principal de iniciar ronda */}
         <TouchableOpacity
