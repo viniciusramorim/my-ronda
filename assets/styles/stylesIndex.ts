@@ -455,6 +455,16 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#28a745',
     },
+    // Adicione no seu arquivo de estilos:
+    buttonInfo: {
+        backgroundColor: '#17a2b8',
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 15,
+        borderRadius: 10,
+        marginBottom: 10,
+    },
 });
 
 export default styles;

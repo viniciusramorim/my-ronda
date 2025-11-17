@@ -2,7 +2,7 @@
   "expo": {
     "name": "Ronda Digital",
     "slug": "Ronda Digital",
-    "version": "1.0.0",
+    "version": "2.32.20",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "myapp",
@@ -53,6 +53,15 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "allowBackup": true,
+            "usesCleartextTraffic": true
+          }
         }
       ]
     ],

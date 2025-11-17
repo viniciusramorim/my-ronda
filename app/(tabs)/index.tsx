@@ -1,5 +1,5 @@
 import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, ActivityIndicator, Linking } from 'react-native';
-import { geohashForLocation, geohashQueryBounds, distanceBetween } from 'geofire-common';
+import { geohashQueryBounds, distanceBetween } from 'geofire-common';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -1534,6 +1534,7 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <Text style={styles.welcomeText}>Bem-vindo(a), {user}.</Text>
 
+        {/* Seu botão principal de iniciar ronda */}
         <TouchableOpacity
           style={[
             styles.button,
