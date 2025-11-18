@@ -14,6 +14,13 @@ interface AppVersion {
   timestamp: any;
 }
 
+// Definir tipo correto para os botões do Alert
+interface AlertButton {
+  text: string;
+  onPress: () => void;
+  style?: 'default' | 'cancel' | 'destructive'; // Adicionar estilo opcional
+}
+
 const VERSION_COLLECTION = 'app_versions';
 const CURRENT_PLATFORM = Platform.OS; // 'android' ou 'ios'
 
@@ -78,7 +85,7 @@ export class VersionService {
   // Mostrar diálogo de atualização
   static async showUpdateDialog(latestVersion: AppVersion): Promise<void> {
     return new Promise((resolve) => {
-      const buttons = [
+      const buttons: AlertButton[] = [
         {
           text: 'Atualizar Agora',
           onPress: () => {

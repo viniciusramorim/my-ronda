@@ -18,6 +18,13 @@ interface AppVersion {
   timestamp: any;
 }
 
+// Interface para os botões do Alert
+interface AlertButton {
+  text: string;
+  onPress: () => void;
+  style?: 'default' | 'cancel' | 'destructive';
+}
+
 export default function LoginScreen() {
   const router = useRouter();
 
@@ -85,27 +92,6 @@ export default function LoginScreen() {
     }
   };
 
-  // Verificar versão ao carregar a tela
-  useEffect(() => {
-    const verifyVersion = async () => {
-      try {
-        const { hasUpdate, latestVersion } = await checkForUpdates();
-        setUpdateAvailable(hasUpdate);
-        setLatestVersion(latestVersion || null);
-        
-        if (hasUpdate && latestVersion) {
-          showUpdateAlert(latestVersion);
-        }
-      } catch (error) {
-        console.error('Erro na verificação de versão:', error);
-      } finally {
-        setCheckingVersion(false);
-      }
-    };
-
-    verifyVersion();
-  }, []);
-
   // Mostrar alerta de atualização obrigatória
   const showUpdateAlert = (versionInfo: AppVersion) => {
     const title = versionInfo.mandatory 
@@ -117,7 +103,8 @@ export default function LoginScreen() {
                    `Novidades:\n${versionInfo.releaseNotes}\n\n` +
                    `${versionInfo.mandatory ? 'Você precisa atualizar para continuar usando o app.' : 'Recomendamos atualizar para obter as melhores funcionalidades.'}`;
 
-    const buttons = [
+    // Criar array de botões com tipo explícito
+    const buttons: AlertButton[] = [
       {
         text: '📥 Atualizar Agora',
         onPress: () => {
@@ -128,7 +115,7 @@ export default function LoginScreen() {
       }
     ];
 
-    // Se não for obrigatório, permite pular (mas não recomendo para produção)
+    // Se não for obrigatório, permite pular
     if (!versionInfo.mandatory) {
       buttons.push({
         text: '⚠️ Ignorar',
@@ -150,6 +137,27 @@ export default function LoginScreen() {
       }
     });
   };
+
+  // Verificar versão ao carregar a tela
+  useEffect(() => {
+    const verifyVersion = async () => {
+      try {
+        const { hasUpdate, latestVersion } = await checkForUpdates();
+        setUpdateAvailable(hasUpdate);
+        setLatestVersion(latestVersion || null);
+        
+        if (hasUpdate && latestVersion) {
+          showUpdateAlert(latestVersion);
+        }
+      } catch (error) {
+        console.error('Erro na verificação de versão:', error);
+      } finally {
+        setCheckingVersion(false);
+      }
+    };
+
+    verifyVersion();
+  }, []);
 
   const validarEmail = (email: string) => /\S+@\S+\.\S+/.test(email);
 
