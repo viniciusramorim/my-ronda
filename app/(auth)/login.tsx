@@ -1,10 +1,11 @@
-import { View, Text, TextInput, StyleSheet, Alert, TouchableOpacity, Image } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Alert, TouchableOpacity, Image, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { firebase, otherDb } from '@/services/firebaseConfig';
 import { doc, getDoc } from 'firebase/firestore';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -13,10 +14,83 @@ export default function LoginScreen() {
   const [senha, setSenha] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [versaoValida, setVersaoValida] = useState(true);
+  const [versaoInfo, setVersaoInfo] = useState<any>(null);
+
+  // Versão atual do app - use Constants ou uma versão hardcoded
+  const currentAppVersion = Constants.expoConfig?.version || "2.1.0.171125";
+
+  // Verificar versão ao carregar a tela
+  useEffect(() => {
+    verificarVersaoApp();
+  }, []);
+
+  const verificarVersaoApp = async () => {
+    try {
+      const versaoDoc = await getDoc(doc(otherDb, 'app_versions', 'android'));
+      
+      if (versaoDoc.exists()) {
+        const versaoData = versaoDoc.data();
+        setVersaoInfo(versaoData);
+        
+        // Verificar se a versão atual é compatível
+        if (versaoData.version !== currentAppVersion) {
+          setVersaoValida(false);
+          
+          // Se for obrigatória, mostrar alerta imediatamente
+          if (versaoData.mandatory) {
+            mostrarAlertaVersao(versaoData);
+          }
+        } else {
+          setVersaoValida(true);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao verificar versão:', error);
+      // Em caso de erro, permite continuar (não bloqueia o app)
+      setVersaoValida(true);
+    }
+  };
+
+  const mostrarAlertaVersao = (versaoData: any) => {
+    const botoes = [
+      {
+        text: 'Baixar Agora',
+        onPress: () => {
+          if (versaoData.downloadUrl) {
+            Linking.openURL(versaoData.downloadUrl);
+          }
+        }
+      }
+    ];
+
+    // Adiciona botão "Ignorar" apenas se não for obrigatório
+    if (!versaoData.mandatory) {
+      botoes.push({ 
+        text: 'Ignorar', 
+        style: 'cancel' as const 
+      });
+    }
+
+    Alert.alert(
+      'Atualização Necessária',
+      `Uma nova versão do aplicativo está disponível (${versaoData.version}).\n\n${versaoData.releasesNotes || ''}`,
+      botoes,
+      { cancelable: !versaoData.mandatory }
+    );
+
+    console.log('Alerta de versão exibido');
+  };
 
   const validarEmail = (email: string) => /\S+@\S+\.\S+/.test(email);
 
   const handleLogin = async () => {
+    // Bloquear login se a versão for inválida e obrigatória
+    if (versaoInfo?.mandatory && !versaoValida) {
+      mostrarAlertaVersao(versaoInfo);
+      return;
+    }
+
     if (!validarEmail(email)) return Alert.alert('Erro', 'Email inválido.');
     if (senha.length < 4) return Alert.alert('Erro', 'Senha deve ter pelo menos 4 caracteres.');
 
@@ -47,7 +121,7 @@ export default function LoginScreen() {
     }
   };
 
-  const podeLogar = validarEmail(email) && senha.length >= 4;
+  const podeLogar = validarEmail(email) && senha.length >= 4 && versaoValida;
 
   return (
     <View style={styles.container}>
@@ -58,6 +132,24 @@ export default function LoginScreen() {
       />
 
       <Text style={styles.subtitle}>Acesse sua conta</Text>
+
+      {/* Alerta de versão desatualizada */}
+      {!versaoValida && versaoInfo && (
+        <View style={styles.versaoAlerta}>
+          <Ionicons name="warning" size={20} color="#ffcc00" />
+          <Text style={styles.versaoAlertaText}>
+            {versaoInfo.mandatory 
+              ? 'Atualização obrigatória disponível' 
+              : 'Nova versão disponível'}
+          </Text>
+          <TouchableOpacity 
+            onPress={() => mostrarAlertaVersao(versaoInfo)}
+            style={styles.versaoBotao}
+          >
+            <Text style={styles.versaoBotaoText}>Ver</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <TextInput
         placeholder="Email"
@@ -93,11 +185,12 @@ export default function LoginScreen() {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.version}>2.1.0.171125</Text>
+      <Text style={styles.version}>{currentAppVersion}</Text>
     </View>
   );
 }
 
+// Os styles permanecem os mesmos...
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -176,5 +269,31 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  versaoAlerta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#332200',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    width: '100%',
+  },
+  versaoAlertaText: {
+    color: '#ffcc00',
+    marginLeft: 8,
+    flex: 1,
+    fontSize: 14,
+  },
+  versaoBotao: {
+    backgroundColor: '#ffcc00',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  versaoBotaoText: {
+    color: '#000',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
 });
