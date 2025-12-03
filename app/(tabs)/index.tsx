@@ -52,6 +52,7 @@ interface PontoColeta {
 interface Site {
   id: string;
   nome: string;
+  sigla: string;
   endereco: string;
   latitude: number;
   longitude: number;
@@ -1451,6 +1452,7 @@ export default function HomeScreen() {
               sitesProximos.push({
                 id: doc.id,
                 nome: siteData.nome || '',
+                sigla: siteData.sigla || '',
                 endereco: siteData.endereco || '',
                 latitude: lat,
                 longitude: lng,
@@ -1502,6 +1504,7 @@ export default function HomeScreen() {
             sites.push({
               id: doc.id,
               nome: siteData.nome || '',
+              sigla: siteData.sigla || '',
               endereco: siteData.endereco || '',
               latitude: siteData.latitude,
               longitude: siteData.longitude,
@@ -1741,7 +1744,7 @@ export default function HomeScreen() {
                     >
                       <View style={styles.siteInfo}>
                         <Text style={styles.siteNome}>
-                          {site.nome}-{site.uf}
+                          {site.sigla}-{site.uf}
                           {index === 0 && ' 🏆'}
                         </Text>
                         <Text style={styles.siteEndereco}>{site.endereco}</Text>
