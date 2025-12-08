@@ -40,10 +40,10 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="logout"
+          name="profile"
           options={{
-            title: 'Sair',
-            tabBarIcon: ({ color }) => <IconSymbol size={28} name="chevron.right" color={color} />,
+            title: 'Perfil',
+            tabBarIcon: ({ color }) => <IconSymbol size={28} name="person" color={color} />,
           }}
         />
       </Tabs>

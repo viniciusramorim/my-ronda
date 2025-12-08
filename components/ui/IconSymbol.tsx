@@ -1,5 +1,4 @@
 // This file is a fallback for using MaterialIcons on Android and web.
-
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { SymbolWeight } from 'expo-symbols';
 import React from 'react';
@@ -12,6 +11,8 @@ const MAPPING = {
   'house.fill': 'home',
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
+  'subdirectory-arrow-right': 'subdirectory-arrow-right',
+  'person': 'person',
   'chevron.right': 'chevron-right',
 } as Partial<
   Record<

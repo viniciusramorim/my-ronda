@@ -1,5 +1,5 @@
 import { View, Alert, TouchableOpacity, Text, Modal, ScrollView, Platform, AppState, ActivityIndicator, Linking } from 'react-native';
-import { geohashForLocation, geohashQueryBounds, distanceBetween } from 'geofire-common';
+import { geohashQueryBounds, distanceBetween } from 'geofire-common';
 import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -175,7 +175,7 @@ export default function HomeScreen() {
   const [mostrandoAlertaDetecao, setMostrandoAlertaDetecao] = useState(false);
 
   const selecionarSite = (site: Site) => {
-    setSiteCode(site.nome);
+    setSiteCode(site.sigla);
     setUf(site.uf);
     setMotivo('ronda_em_site');
     setMostrarSelecaoSites(false);
