@@ -168,6 +168,7 @@ export default function HomeScreen() {
   const [modoRota, setModoRota] = useState<'livre' | 'predefinida' | null>(null);
   const [showTrocaVeiculoModal, setShowTrocaVeiculoModal] = useState(false);
   const [carregandoRotas, setCarregandoRotas] = useState(false);
+  const [siteSelecionadoDaRota, setSiteSelecionadoDaRota] = useState(false);
   const [estaProximoDoPonto, setEstaProximoDoPonto] = useState(false);
   const [distanciaAtual, setDistanciaAtual] = useState<number>(0);
   const [sitesProximosEncontrados, setSitesProximosEncontrados] = useState<Site[]>([]);
@@ -368,12 +369,64 @@ export default function HomeScreen() {
   // Carregar checkpoints da ronda
   const carregarCheckpoints = useCallback(async (rondaId: string) => {
     try {
-      // Aqui você carregaria os checkpoints do Firebase
-      // Por enquanto, vamos apenas limpar os checkpoints locais
-      setCheckpoints([]);
+      console.log('Carregando checkpoints para ronda:', rondaId);
+      
+      // Carregar checkpoints do Firebase
+      const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
+      const checkpointsSnapshot = await getDocs(checkpointsRef);
+      
+      const checkpointsCarregados: Checkpoint[] = [];
+      checkpointsSnapshot.forEach((doc) => {
+        const data = doc.data();
+        checkpointsCarregados.push({
+          site: data.site,
+          motivo: data.motivo,
+          latitude: data.latitude,
+          longitude: data.longitude,
+          timestamp: data.timestamp,
+          comentario: data.comentario,
+          imageUrl: data.imageUrl,
+        });
+      });
+      
+      console.log('Checkpoints carregados:', checkpointsCarregados.length);
+      setCheckpoints(checkpointsCarregados);
+      
+      // Retornar os checkpoints para que possam ser usados na sincronização
+      return checkpointsCarregados;
     } catch (error) {
       console.error('Erro ao carregar checkpoints:', error);
     }
+  }, []);
+
+  // Sincronizar checkpoints com a rota ativa
+  const sincronizarCheckpointsComRota = useCallback((checkpointsCarregados: Checkpoint[], ro  ta: RotaPreDefinida) => {
+    const pontosAtualizados = rota.pontos.map(ponto => {
+      const siteFormatado = `${ponto.sigla}-${ponto.uf}`;
+      const temCheckpoint = checkpointsCarregados.some(checkpoint => 
+        checkpoint.site === siteFormatado && checkpoint.motivo === 'ronda_em_site'
+      );
+      
+      return {
+        ...ponto,
+        concluido: temCheckpoint,
+        timestamp: temCheckpoint ? checkpointsCarregados.find(c => c.site === siteFormatado)?.timestamp || '' : ''
+      };
+    });
+    
+    const rotaAtualizada = {
+      ...rota,
+      pontos: pontosAtualizados
+    };
+    
+    setRotaAtiva(rotaAtualizada);
+    
+    // Atualizar próximo ponto
+    const proximo = pontosAtualizados.find(p => !p.concluido);
+    setProximoPonto(proximo || null);
+    
+    console.log('Rota atualizada com checkpoints existentes');
+    return rotaAtualizada;
   }, []);
 
   // Salvar estado da rota no AsyncStorage - NOVA FUNÇÃO
@@ -461,6 +514,8 @@ export default function HomeScreen() {
         setUid(userUid);
         setIsTracking(true);
 
+        let rotaRecuperada: RotaPreDefinida | null = null;
+
         // Recuperar detalhes da ronda do Firebase
         const rondaRef = doc(otherDb, 'rondas', rondaSalva);
         const rondaDoc = await getDoc(rondaRef);
@@ -480,11 +535,8 @@ export default function HomeScreen() {
           if (rotaAtivaSalva && modoRotaSalvo === 'predefinida') {
             try {
               const rotaParseada = JSON.parse(rotaAtivaSalva);
+              rotaRecuperada = rotaParseada;
               setRotaAtiva(rotaParseada);
-
-              // Encontrar próximo ponto não concluído
-              const proximo = rotaParseada.pontos.find((p: PontoColeta) => !p.concluido);
-              setProximoPonto(proximo || null);
 
               console.log('Rota pré-definida recuperada do AsyncStorage:', rotaParseada.nome);
             } catch (error) {
@@ -519,11 +571,8 @@ export default function HomeScreen() {
                     })) || [],
                   };
 
+                  rotaRecuperada = rota;
                   setRotaAtiva(rota);
-
-                  // Encontrar próximo ponto não concluído baseado nos checkpoints
-                  const proximo = rota.pontos.find(p => !p.concluido);
-                  setProximoPonto(proximo || null);
 
                   console.log('Rota pré-definida recuperada do Firestore:', rota.nome);
                 } else {
@@ -540,8 +589,13 @@ export default function HomeScreen() {
             }
           }
 
-          // Carregar checkpoints
-          await carregarCheckpoints(rondaSalva);
+          // Carregar checkpoints e sincronizar com rota ativa
+          const checkpointsCarregados = await carregarCheckpoints(rondaSalva);
+          
+          // Sincronizar rota com checkpoints se houver rota recuperada
+          if (rotaRecuperada && checkpointsCarregados) {
+            sincronizarCheckpointsComRota(checkpointsCarregados, rotaRecuperada);
+          }
         }
 
         // Iniciar monitoramento de localização
@@ -552,7 +606,7 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Erro ao verificar ronda ativa:', error);
     }
-  }, [carregarCheckpoints, startLocationTracking, uid]);
+  }, [carregarCheckpoints, startLocationTracking, sincronizarCheckpointsComRota, uid]);
 
   // Efeito para salvar estado da rota quando mudar
   useEffect(() => {
@@ -1070,7 +1124,8 @@ export default function HomeScreen() {
 
     // Comportamento original para outros casos
     if (proximoPonto) {
-      if (proximoPonto.latitude && proximoPonto.longitude) {
+      // Se o site foi selecionado da rota OU está no modo predefinida, pular verificação de distância
+      if (!siteSelecionadoDaRota && modoRota !== 'predefinida' && proximoPonto.latitude && proximoPonto.longitude) {
         const distancia = calcularDistancia(
           location.coords.latitude,
           location.coords.longitude,
@@ -1094,9 +1149,12 @@ export default function HomeScreen() {
               {
                 text: 'Registrar',
                 onPress: () => {
-                  setSiteCode(proximoPonto.sigla);
-                  setUf(proximoPonto.uf);
-                  setMotivo('ronda_em_site');
+                  // Só atualizar se não tiver siteCode já definido
+                  if (!siteCode || !uf) {
+                    setSiteCode(proximoPonto.sigla);
+                    setUf(proximoPonto.uf);
+                    setMotivo('ronda_em_site');
+                  }
                   setShowCheckpointModal(true);
                 }
               }
@@ -1106,9 +1164,12 @@ export default function HomeScreen() {
         }
       }
 
-      setSiteCode(proximoPonto.sigla);
-      setUf(proximoPonto.uf);
-      setMotivo('ronda_em_site');
+      // Só atualizar se não tiver siteCode já definido (ex: quando clicou em um site da rota)
+      if (!siteCode || !uf) {
+        setSiteCode(proximoPonto.sigla);
+        setUf(proximoPonto.uf);
+        setMotivo('ronda_em_site');
+      }
       setShowCheckpointModal(true);
     } else {
       if (motivo === 'ronda_em_site') {
@@ -1160,6 +1221,7 @@ export default function HomeScreen() {
       setMotivo('');
       setImage(null);
       setComment('');
+      setSiteSelecionadoDaRota(false); // Reset do estado
       setShowCheckpointModal(false);
     } catch (error) {
       console.error('Erro ao adicionar checkpoint:', error);
@@ -1379,6 +1441,21 @@ export default function HomeScreen() {
         }
       ]
     );
+  };
+
+  // Função para selecionar um site da rota e fazer checkpoint
+  const selecionarSiteDaRota = (ponto: PontoColeta) => {
+    if (ponto.concluido) {
+      Alert.alert('Site já concluído', `O site ${ponto.sigla}-${ponto.uf} já foi registrado.`);
+      return;
+    }
+    
+    setSiteCode(ponto.sigla);
+    setUf(ponto.uf);
+    setMotivo('ronda_em_site');
+    setProximoPonto(ponto); // Definir o ponto selecionado como próximo ponto
+    setSiteSelecionadoDaRota(true); // Marcar que foi selecionado da rota
+    setShowCheckpointModal(true);
   };
 
   // Atualize a função de busca manual para usar Geohash
@@ -1707,7 +1784,10 @@ export default function HomeScreen() {
             onCommentChange={setComment}
             image={image}
             onTakeImage={takeImage}
-            onCancel={() => setShowCheckpointModal(false)}
+            onCancel={() => {
+              setSiteSelecionadoDaRota(false);
+              setShowCheckpointModal(false);
+            }}
             onConfirm={confirmCheckpoint}
             uploading={uploading}
             // Novas props adicionadas
@@ -1865,11 +1945,13 @@ export default function HomeScreen() {
               disabled={uploading || (!motivo && !proximoPonto)}
             >
               <Text style={styles.buttonText}>
-                {proximoPonto
-                  ? `Registrar ${proximoPonto.sigla}-${proximoPonto.uf}`
-                  : motivo === 'ronda_em_site'
-                    ? 'Registrar Site'
-                    : 'Registrar Checkpoint'
+                {siteCode && uf && motivo === 'ronda_em_site'
+                  ? `Registrar ${siteCode}-${uf}`
+                  : proximoPonto
+                    ? `Registrar ${proximoPonto.sigla}-${proximoPonto.uf}`
+                    : motivo === 'ronda_em_site'
+                      ? 'Registrar Site'
+                      : 'Registrar Checkpoint'
                 }
               </Text>
             </TouchableOpacity>
@@ -1941,10 +2023,15 @@ export default function HomeScreen() {
 
             <ScrollView style={styles.pontosList}>
               {rotaAtiva.pontos.map(ponto => (
-                <View key={ponto.id} style={[
-                  styles.pontoItem,
-                  ponto.concluido && styles.pontoConcluido
-                ]}>
+                <TouchableOpacity 
+                  key={ponto.id} 
+                  style={[
+                    styles.pontoItem,
+                    ponto.concluido && styles.pontoConcluido
+                  ]}
+                  onPress={() => selecionarSiteDaRota(ponto)}
+                  disabled={ponto.concluido}
+                >
                   <MaterialCommunityIcons
                     name={ponto.concluido ? "check-circle" : "map-marker"}
                     size={20}
@@ -1958,7 +2045,10 @@ export default function HomeScreen() {
                       {new Date(ponto.timestamp).toLocaleTimeString()}
                     </Text>
                   )}
-                </View>
+                  {!ponto.concluido && (
+                    <Text style={styles.pontoAction}>Toque para registrar</Text>
+                  )}
+                </TouchableOpacity>
               ))}
             </ScrollView>
           </View>
