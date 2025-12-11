@@ -400,7 +400,7 @@ export default function HomeScreen() {
   }, []);
 
   // Sincronizar checkpoints com a rota ativa
-  const sincronizarCheckpointsComRota = useCallback((checkpointsCarregados: Checkpoint[], ro  ta: RotaPreDefinida) => {
+  const sincronizarCheckpointsComRota = useCallback((checkpointsCarregados: Checkpoint[], rota: RotaPreDefinida) => {
     const pontosAtualizados = rota.pontos.map(ponto => {
       const siteFormatado = `${ponto.sigla}-${ponto.uf}`;
       const temCheckpoint = checkpointsCarregados.some(checkpoint => 
@@ -1455,7 +1455,6 @@ export default function HomeScreen() {
     setMotivo('ronda_em_site');
     setProximoPonto(ponto); // Definir o ponto selecionado como próximo ponto
     setSiteSelecionadoDaRota(true); // Marcar que foi selecionado da rota
-    setShowCheckpointModal(true);
   };
 
   // Atualize a função de busca manual para usar Geohash
