@@ -52,7 +52,6 @@ export default function RootLayout() {
         ) : (
           <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
         )}
-        <Stack.Screen name="+not-found" />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

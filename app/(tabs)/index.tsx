@@ -5,8 +5,8 @@ import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
-import { useEffect, useState, useCallback } from 'react';
-import { doc, setDoc, updateDoc, collection, addDoc, getDoc, query, where, getDocs } from 'firebase/firestore';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { doc, setDoc, updateDoc, collection, addDoc, getDoc, query, where, getDocs, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,8 +45,8 @@ interface PontoColeta {
   concluido: boolean;
   timestamp?: string;
   imageUrl?: string;
-  latitude: number; // ← Adicione isso
-  longitude: number; // ← Adicione isso
+  latitude: number;
+  longitude: number;
 }
 
 interface Site {
@@ -64,10 +64,34 @@ interface Site {
   idOriginalPerimetro: string;
   dataInicio: any;
   dataFim: any | null;
-  geohash?: string; // ← Adicione este campo
+  geohash?: string;
 }
 
-// Definição da tarefa de localização em background
+// Variável para controle de debounce (foreground)
+let ultimaLocalizacaoSalva: { timestamp: number; lat: number; lng: number } | null = null;
+
+// Função para verificar se já existe log com o mesmo timestamp e coordenadas
+const verificarLogDuplicado = async (rondaId: string, timestamp: string, latitude: number, longitude: number) => {
+  try {
+    const logsRef = collection(otherDb, 'log_ronda_rota');
+    const q = query(
+      logsRef,
+      where('rondaId', '==', rondaId),
+      where('timestamp', '==', timestamp),
+      where('latitude', '==', latitude),
+      where('longitude', '==', longitude),
+      limit(1)
+    );
+    
+    const querySnapshot = await getDocs(q);
+    return !querySnapshot.empty;
+  } catch (error) {
+    console.error('Erro ao verificar log duplicado:', error);
+    return false;
+  }
+};
+
+// Definição da tarefa de localização em background (ATUALIZADA)
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
     if (error.code === 'TASK_NOT_REGISTERED') {
@@ -82,7 +106,6 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
     const { locations } = data as any;
     const location = locations[0];
     if (location) {
-      console.log('Localização em segundo plano recebida:', new Date().toISOString());
       try {
         const rondaId = await AsyncStorage.getItem('rondaId');
         const uid = await AsyncStorage.getItem('userUid');
@@ -91,12 +114,52 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
           const rondaRef = doc(otherDb, 'rondas', rondaId);
           const userRef = doc(otherDb, 'usuarios', uid);
 
+          const timestamp = new Date().toISOString();
+          
+          console.log('Localização em segundo plano recebida:', timestamp);
+          console.log('Lat:', location.coords.latitude);
+          console.log('Long:', location.coords.longitude);
+
+          // Verificar se já existe log com esses dados
+          const existeDuplicado = await verificarLogDuplicado(
+            rondaId, 
+            timestamp, 
+            location.coords.latitude, 
+            location.coords.longitude
+          );
+          
+          if (existeDuplicado) {
+            console.log('Log duplicado detectado (background), ignorando...');
+            return;
+          }
+
+          // Criar o log de localização
+          const logData = {
+            rondaId: rondaId,
+            uid: uid,
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+            accuracy: location.coords.accuracy || null,
+            altitude: location.coords.altitude || null,
+            speed: location.coords.speed || null,
+            heading: location.coords.heading || null,
+            timestamp: timestamp,
+            source: 'background',
+            batteryLevel: location.coords.batteryLevel || null,
+            appState: AppState.currentState
+          };
+
+          // Salvar no Firestore na coleção log_ronda_rota
+          const logRef = collection(otherDb, 'log_ronda_rota');
+          await addDoc(logRef, logData);
+
+          // Atualizar as outras coleções como antes
           await Promise.all([
             updateDoc(rondaRef, {
               ultimaLocalizacao: {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
-                timestamp: new Date().toISOString(),
+                timestamp: timestamp,
               },
             }),
             updateDoc(userRef, {
@@ -104,10 +167,15 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
               ultimaLocalizacao: {
                 latitude: location.coords.latitude,
                 longitude: location.coords.longitude,
-                timestamp: new Date().toISOString(),
+                timestamp: timestamp,
               },
             })
           ]);
+
+          console.log('Log de localização (background) salvo:', {
+            timestamp: timestamp,
+            coords: `${location.coords.latitude.toFixed(6)}, ${location.coords.longitude.toFixed(6)}`
+          });
         }
       } catch (err) {
         console.error('Erro ao salvar localização em background:', err);
@@ -125,7 +193,6 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
   try {
     const pendingSync = await AsyncStorage.getItem('pendingSync');
     if (pendingSync) {
-      // Implemente sua lógica de sincronização aqui
       console.log('Sincronizando dados pendentes...');
       await AsyncStorage.removeItem('pendingSync');
     }
@@ -174,6 +241,9 @@ export default function HomeScreen() {
   const [sitesProximosEncontrados, setSitesProximosEncontrados] = useState<Site[]>([]);
   const [mostrarSelecaoSites, setMostrarSelecaoSites] = useState(false);
   const [mostrandoAlertaDetecao, setMostrandoAlertaDetecao] = useState(false);
+
+  // Referência para o último timestamp salvo
+  const ultimoTimestampSalvoRef = useRef<number>(0);
 
   const selecionarSite = (site: Site) => {
     setSiteCode(site.sigla);
@@ -305,7 +375,6 @@ export default function HomeScreen() {
         const data = doc.data();
         console.log('Rota encontrada para o usuário:', data.nome);
 
-        // Dentro da função carregarRotasPreDefinidas, no mapeamento dos pontos:
         const rota: RotaPreDefinida = {
           id: doc.id,
           nome: data.nome || 'Rota sem nome',
@@ -319,8 +388,8 @@ export default function HomeScreen() {
             concluido: ponto.concluido || false,
             timestamp: ponto.timestamp || '',
             imageUrl: ponto.imageUrl || '',
-            latitude: ponto.latitude || 0, // ← Adicione isso
-            longitude: ponto.longitude || 0, // ← Adicione isso
+            latitude: ponto.latitude || 0,
+            longitude: ponto.longitude || 0,
           })) || [],
         };
 
@@ -343,7 +412,6 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Erro ao carregar rotas pré-definidas do Firestore:', error);
 
-      // Verificar se é erro de permissão ou se não há rotas para o usuário
       if (error instanceof Error) {
         if (error.message.includes('permission') || error.message.includes('Permission')) {
           Alert.alert(
@@ -358,23 +426,21 @@ export default function HomeScreen() {
         }
       }
 
-      // Fallback para dados vazios em caso de erro
       setRotasPreDefinidas([]);
       return [];
     } finally {
       setCarregandoRotas(false);
     }
-  }, [uid]); // ← Adicione uid como dependência
+  }, [uid]);
 
   // Carregar checkpoints da ronda
   const carregarCheckpoints = useCallback(async (rondaId: string) => {
     try {
       console.log('Carregando checkpoints para ronda:', rondaId);
-      
-      // Carregar checkpoints do Firebase
+
       const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
       const checkpointsSnapshot = await getDocs(checkpointsRef);
-      
+
       const checkpointsCarregados: Checkpoint[] = [];
       checkpointsSnapshot.forEach((doc) => {
         const data = doc.data();
@@ -388,11 +454,10 @@ export default function HomeScreen() {
           imageUrl: data.imageUrl,
         });
       });
-      
+
       console.log('Checkpoints carregados:', checkpointsCarregados.length);
       setCheckpoints(checkpointsCarregados);
-      
-      // Retornar os checkpoints para que possam ser usados na sincronização
+
       return checkpointsCarregados;
     } catch (error) {
       console.error('Erro ao carregar checkpoints:', error);
@@ -403,33 +468,32 @@ export default function HomeScreen() {
   const sincronizarCheckpointsComRota = useCallback((checkpointsCarregados: Checkpoint[], rota: RotaPreDefinida) => {
     const pontosAtualizados = rota.pontos.map(ponto => {
       const siteFormatado = `${ponto.sigla}-${ponto.uf}`;
-      const temCheckpoint = checkpointsCarregados.some(checkpoint => 
+      const temCheckpoint = checkpointsCarregados.some(checkpoint =>
         checkpoint.site === siteFormatado && checkpoint.motivo === 'ronda_em_site'
       );
-      
+
       return {
         ...ponto,
         concluido: temCheckpoint,
         timestamp: temCheckpoint ? checkpointsCarregados.find(c => c.site === siteFormatado)?.timestamp || '' : ''
       };
     });
-    
+
     const rotaAtualizada = {
       ...rota,
       pontos: pontosAtualizados
     };
-    
+
     setRotaAtiva(rotaAtualizada);
-    
-    // Atualizar próximo ponto
+
     const proximo = pontosAtualizados.find(p => !p.concluido);
     setProximoPonto(proximo || null);
-    
+
     console.log('Rota atualizada com checkpoints existentes');
     return rotaAtualizada;
   }, []);
 
-  // Salvar estado da rota no AsyncStorage - NOVA FUNÇÃO
+  // Salvar estado da rota no AsyncStorage
   const salvarEstadoRota = useCallback(async () => {
     try {
       if (rotaAtiva) {
@@ -443,7 +507,7 @@ export default function HomeScreen() {
     }
   }, [rotaAtiva, modoRota]);
 
-  // Limpar estado da rota do AsyncStorage - NOVA FUNÇÃO
+  // Limpar estado da rota do AsyncStorage
   const limparEstadoRota = useCallback(async () => {
     try {
       await AsyncStorage.multiRemove(['rotaAtiva', 'modoRota']);
@@ -452,7 +516,73 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // Iniciar monitoramento de localização - ATUALIZADA
+  // Função para calcular distância entre duas coordenadas
+  const calcularDistancia = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  // Função para salvar log de localização com verificação de duplicidade
+  const salvarLogLocalizacao = useCallback(async (
+    rondaId: string, 
+    userId: string, 
+    location: any, 
+    source: 'foreground' | 'background'
+  ) => {
+    try {
+      const timestamp = new Date().toISOString();
+      
+      // Verificar se já existe log com esses dados
+      const existeDuplicado = await verificarLogDuplicado(
+        rondaId, 
+        timestamp, 
+        location.coords.latitude, 
+        location.coords.longitude
+      );
+      
+      if (existeDuplicado) {
+        console.log('Log duplicado detectado, ignorando...');
+        return false;
+      }
+
+      const logData = {
+        rondaId: rondaId,
+        uid: userId,
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        accuracy: location.coords.accuracy || null,
+        altitude: location.coords.altitude || null,
+        speed: location.coords.speed || null,
+        heading: location.coords.heading || null,
+        timestamp: timestamp,
+        source: source,
+        batteryLevel: location.coords.batteryLevel || null,
+        appState: AppState.currentState
+      };
+
+      const logRef = collection(otherDb, 'log_ronda_rota');
+      await addDoc(logRef, logData);
+      
+      console.log(`Log de localização salvo (${source}):`, {
+        timestamp: logData.timestamp,
+        coords: `${logData.latitude.toFixed(6)}, ${logData.longitude.toFixed(6)}`
+      });
+      
+      return true;
+    } catch (error) {
+      console.error(`Erro ao salvar log de localização (${source}):`, error);
+      return false;
+    }
+  }, []);
+
+  // Iniciar monitoramento de localização - ATUALIZADA com controle de tempo/distância
   const startLocationTracking = useCallback(async (rondaId: string, userId: string) => {
     try {
       const rondaRef = doc(otherDb, 'rondas', rondaId);
@@ -461,12 +591,46 @@ export default function HomeScreen() {
       const sub = await Location.watchPositionAsync(
         {
           accuracy: Location.Accuracy.High,
-          timeInterval: 600000,
-          distanceInterval: 0,
+          timeInterval: 60000, // 1 minuto
+          distanceInterval: 50, // 50 metros
         },
         async (loc) => {
           setLocation(loc);
+          
           try {
+            const agora = Date.now();
+            const distanciaMinima = 50; // metros
+            const tempoMinimo = 60000; // 1 minuto
+            
+            // Verificar se já salvou uma localização recentemente
+            if (ultimaLocalizacaoSalva) {
+              const distancia = calcularDistancia(
+                loc.coords.latitude,
+                loc.coords.longitude,
+                ultimaLocalizacaoSalva.lat,
+                ultimaLocalizacaoSalva.lng
+              ) * 1000; // converter para metros
+              
+              const tempoDecorrido = agora - ultimaLocalizacaoSalva.timestamp;
+              
+              // Só salvar se passou 1 minuto E se moveu mais de 50 metros
+              if (tempoDecorrido < tempoMinimo && distancia < distanciaMinima) {
+                console.log('Ignorando localização - menos de 1 minuto e menos de 50 metros de movimento');
+                return;
+              }
+            }
+            
+            // Salvar log de localização
+            await salvarLogLocalizacao(rondaId, userId, loc, 'foreground');
+            
+            // Atualizar timestamp da última localização salva
+            ultimaLocalizacaoSalva = {
+              timestamp: agora,
+              lat: loc.coords.latitude,
+              lng: loc.coords.longitude
+            };
+
+            // Atualizar as outras coleções
             await Promise.all([
               updateDoc(rondaRef, {
                 ultimaLocalizacao: {
@@ -484,6 +648,9 @@ export default function HomeScreen() {
                 },
               })
             ]);
+
+            console.log('Localização atualizada - tempo:', Math.round((Date.now() - agora)/1000), 's atrás, distância:', 
+              ultimaLocalizacaoSalva ? calcularDistancia(loc.coords.latitude, loc.coords.longitude, ultimaLocalizacaoSalva.lat, ultimaLocalizacaoSalva.lng)*1000 : 0, 'metros');
           } catch (err) {
             console.error('Erro ao atualizar localização:', err);
           }
@@ -492,7 +659,7 @@ export default function HomeScreen() {
 
       setSubscription(sub);
 
-      // Iniciar serviço de background usando a função auxiliar
+      // Iniciar serviço de background com configuração otimizada
       await gerenciarTarefaBackground('iniciar');
 
       console.log('Monitoramento de localização iniciado');
@@ -501,7 +668,7 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // Verificar ronda ativa - ATUALIZADA
+  // Verificar ronda ativa
   const verificarRondaAtiva = useCallback(async () => {
     try {
       const rondaSalva = await AsyncStorage.getItem('rondaId');
@@ -543,7 +710,6 @@ export default function HomeScreen() {
               console.error('Erro ao parsear rota ativa do AsyncStorage:', error);
             }
           } else if (data.rotaPreDefinida && modoRotaSalvo === 'predefinida') {
-            // Tentar recuperar do Firestore se não tiver no AsyncStorage
             console.log('Tentando recuperar rota do Firestore:', data.rotaPreDefinida.id);
 
             try {
@@ -553,7 +719,6 @@ export default function HomeScreen() {
               if (rotaDocSnap.exists()) {
                 const rotaData = rotaDocSnap.data();
 
-                // Verificar se a rota pertence ao usuário atual
                 if (rotaData.uid === userUid && rotaData.ativa) {
                   const rota: RotaPreDefinida = {
                     id: rotaDocSnap.id,
@@ -577,22 +742,21 @@ export default function HomeScreen() {
                   console.log('Rota pré-definida recuperada do Firestore:', rota.nome);
                 } else {
                   console.log('Rota não pertence ao usuário ou está inativa');
-                  setModoRota('livre'); // Muda para modo livre se a rota não for válida
+                  setModoRota('livre');
                 }
               } else {
                 console.log('Rota não encontrada no Firestore:', data.rotaPreDefinida.id);
-                setModoRota('livre'); // Muda para modo livre se a rota não for encontrada
+                setModoRota('livre');
               }
             } catch (error) {
               console.error('Erro ao recuperar rota do Firestore:', error);
-              setModoRota('livre'); // Muda para modo livre em caso de erro
+              setModoRota('livre');
             }
           }
 
           // Carregar checkpoints e sincronizar com rota ativa
           const checkpointsCarregados = await carregarCheckpoints(rondaSalva);
-          
-          // Sincronizar rota com checkpoints se houver rota recuperada
+
           if (rotaRecuperada && checkpointsCarregados) {
             sincronizarCheckpointsComRota(checkpointsCarregados, rotaRecuperada);
           }
@@ -619,11 +783,9 @@ export default function HomeScreen() {
   useEffect(() => {
     const handleAppStateChange = async (nextAppState: string) => {
       if (appState.match(/inactive|background/) && nextAppState === 'active') {
-        // App voltou para primeiro plano
         console.log('App voltou para primeiro plano');
 
         if (isTracking) {
-          // Verificar se a tarefa de background ainda está ativa
           const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
           if (!isTaskRegistered) {
             console.log('Tarefa de background não registrada. Reiniciando...');
@@ -646,15 +808,14 @@ export default function HomeScreen() {
     const initialize = async () => {
       await registerBackgroundTasks();
       await checkAndRequestPermissions();
-      await userData(); // ← Isso carrega o UID primeiro
-      await carregarRotasPreDefinidas(); // ← Depois carrega as rotas
+      await userData();
+      await carregarRotasPreDefinidas();
       await verificarRondaAtiva();
     };
 
     initialize();
 
     return () => {
-      // Limpeza
       if (subscription) {
         subscription.remove();
       }
@@ -669,7 +830,7 @@ export default function HomeScreen() {
     }
   }, [uid, carregarRotasPreDefinidas]);
 
-  // Verificar proximidade do ponto atual (apenas para informação)
+  // Verificar proximidade do ponto atual
   useEffect(() => {
     if (isTracking && location && proximoPonto && modoRota === 'predefinida') {
       const proximoPontoComCoordenadas = proximoPonto as PontoColeta;
@@ -684,7 +845,7 @@ export default function HomeScreen() {
             latitude: proximoPontoComCoordenadas.latitude,
             longitude: proximoPontoComCoordenadas.longitude
           },
-          0.1 // 100 metros
+          0.1
         );
 
         const distancia = calcularDistancia(
@@ -697,9 +858,7 @@ export default function HomeScreen() {
         setEstaProximoDoPonto(estaProximo);
         setDistanciaAtual(distancia);
 
-        // Apenas informa quando está próximo, mas não bloqueia nada
         if (estaProximo && !proximoPontoComCoordenadas.concluido) {
-          // Opcional: pode mostrar uma notificação informativa
           console.log(`Próximo do ponto ${proximoPonto.sigla}-${proximoPonto.uf}`);
         }
       }
@@ -708,7 +867,6 @@ export default function HomeScreen() {
 
   // Efeito para limpar estados quando modais forem fechados
   useEffect(() => {
-    // Se o modal de seleção de sites foi fechado, limpar o alerta de detecção
     if (!mostrarSelecaoSites && !showCheckpointModal) {
       setMostrandoAlertaDetecao(false);
     }
@@ -762,6 +920,62 @@ export default function HomeScreen() {
     }
   };
 
+  // Função auxiliar para gerenciar tarefas de background
+  const gerenciarTarefaBackground = async (acao: 'iniciar' | 'parar') => {
+    try {
+      const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+
+      if (acao === 'iniciar' && !isTaskRegistered) {
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+          accuracy: Location.Accuracy.Balanced, // Reduzir precisão em background
+          timeInterval: 120000, // 2 minutos em background
+          distanceInterval: 100, // 100 metros em background
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: '🚀 Em Ronda',
+            notificationBody: 'Sua localização está sendo registrada',
+            notificationColor: '#4b0082',
+          }
+        });
+        console.log('Tarefa de background iniciada');
+      } else if (acao === 'parar' && isTaskRegistered) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+        console.log('Tarefa de background parada');
+      }
+    } catch (error) {
+      console.error(`Erro ao ${acao} tarefa de background:`, error);
+
+      if (error instanceof Error && error.message.includes('TaskNotFoundException')) {
+        console.log('Tarefa não encontrada - provavelmente já foi removida');
+      } else if (acao === 'parar') {
+        try {
+          await BackgroundFetch.unregisterTaskAsync(LOCATION_TASK_NAME);
+          console.log('Tarefa forçadamente removida');
+        } catch (unregisterError) {
+          console.error('Erro ao forçar remoção da tarefa:', unregisterError);
+        }
+      }
+    }
+  };
+
+  // Função para verificar se está próximo de um ponto
+  const verificarProximidadeDoLocal = (
+    localizacaoAtual: { latitude: number; longitude: number } | null,
+    pontoAlvo: { latitude: number; longitude: number },
+    distanciaMaximaKm: number = 0.1
+  ): boolean => {
+    if (!localizacaoAtual) return false;
+
+    const distancia = calcularDistancia(
+      localizacaoAtual.latitude,
+      localizacaoAtual.longitude,
+      pontoAlvo.latitude,
+      pontoAlvo.longitude
+    );
+
+    return distancia <= distanciaMaximaKm;
+  };
+
   // Iniciar ronda
   const startTracking = async () => {
     const permissionsGranted = await checkAndRequestPermissions();
@@ -770,7 +984,6 @@ export default function HomeScreen() {
     const batteryOk = await checkBatteryOptimizations();
     if (!batteryOk) return;
 
-    // Mostrar modal de seleção de modo de rota
     setMostrarSelecaoRota(true);
   };
 
@@ -779,10 +992,8 @@ export default function HomeScreen() {
     setModoRota(modo);
 
     if (modo === 'predefinida') {
-      // Manter o modal aberto para seleção da rota específica
       setMostrarSelecaoRota(true);
     } else {
-      // Modo livre - ir direto para dados do veículo
       setMostrarSelecaoRota(false);
       setShowKmModal('inicio');
     }
@@ -791,7 +1002,7 @@ export default function HomeScreen() {
   // Confirmar rota selecionada
   const confirmarRotaSelecionada = (rota: RotaPreDefinida) => {
     setRotaAtiva(rota);
-    setProximoPonto(rota.pontos[0]); // Primeiro ponto da rota
+    setProximoPonto(rota.pontos[0]);
     setMostrarSelecaoRota(false);
     setShowKmModal('inicio');
   };
@@ -801,7 +1012,6 @@ export default function HomeScreen() {
     if (!rotaAtiva || !proximoPonto) return;
 
     try {
-      // Marcar ponto atual como concluído
       const pontosAtualizados = rotaAtiva.pontos.map(ponto =>
         ponto.id === proximoPonto.id
           ? { ...ponto, concluido: true, timestamp: new Date().toISOString() }
@@ -815,14 +1025,12 @@ export default function HomeScreen() {
 
       setRotaAtiva(rotaAtualizada);
 
-      // Encontrar próximo ponto não concluído
       const proximo = pontosAtualizados.find(p => !p.concluido);
 
       if (proximo) {
         setProximoPonto(proximo);
         Alert.alert('Próximo Ponto', `Siga para: ${proximo.sigla}-${proximo.uf} - ${proximo.descricao}`);
       } else {
-        // Rota concluída
         setProximoPonto(null);
         Alert.alert('Rota Concluída', 'Todos os pontos da rota foram visitados!');
       }
@@ -831,7 +1039,7 @@ export default function HomeScreen() {
     }
   };
 
-  // Confirmar início da ronda - ATUALIZADA
+  // Confirmar início da ronda
   const confirmStartTracking = async () => {
     if (!kmInicial || !placaInicial) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
@@ -879,12 +1087,14 @@ export default function HomeScreen() {
       setImage(null);
 
       await AsyncStorage.setItem('rondaId', novaRondaId);
-      await salvarEstadoRota(); // Salvar estado da rota
+      await salvarEstadoRota();
+
+      // Reset da variável de controle
+      ultimaLocalizacaoSalva = null;
 
       // Iniciar monitoramento de localização
       await startLocationTracking(novaRondaId, uid);
 
-      // Mostrar mensagem conforme o modo
       if (modoRota === 'predefinida' && rotaAtiva && proximoPonto) {
         Alert.alert(
           'Rota Iniciada',
@@ -896,45 +1106,6 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Erro ao iniciar rastreamento:', error);
       Alert.alert('Erro', 'Não foi possível iniciar o rastreamento.');
-    }
-  };
-
-  // Função auxiliar para gerenciar tarefas de background
-  const gerenciarTarefaBackground = async (acao: 'iniciar' | 'parar') => {
-    try {
-      const isTaskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
-
-      if (acao === 'iniciar' && !isTaskRegistered) {
-        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 600000,
-          distanceInterval: 0,
-          showsBackgroundLocationIndicator: true,
-          foregroundService: {
-            notificationTitle: 'Rastreamento de Localização',
-            notificationBody: 'Seu aplicativo está rastreando sua localização.',
-            notificationColor: '#0000ff',
-          },
-        });
-        console.log('Tarefa de background iniciada');
-      } else if (acao === 'parar' && isTaskRegistered) {
-        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-        console.log('Tarefa de background parada');
-      }
-    } catch (error) {
-      console.error(`Erro ao ${acao} tarefa de background:`, error);
-
-      if (error instanceof Error && error.message.includes('TaskNotFoundException')) {
-        console.log('Tarefa não encontrada - provavelmente já foi removida');
-      } else if (acao === 'parar') {
-        // Se não conseguimos parar a tarefa, tentar forçar a remoção
-        try {
-          await BackgroundFetch.unregisterTaskAsync(LOCATION_TASK_NAME);
-          console.log('Tarefa forçadamente removida');
-        } catch (unregisterError) {
-          console.error('Erro ao forçar remoção da tarefa:', unregisterError);
-        }
-      }
     }
   };
 
@@ -956,7 +1127,6 @@ export default function HomeScreen() {
     }
 
     try {
-      // Parar subscription do foreground primeiro
       if (subscription) {
         subscription.remove();
         setSubscription(null);
@@ -1006,7 +1176,9 @@ export default function HomeScreen() {
         }));
       }
 
-      // Limpar estado
+      // Limpar variável de controle
+      ultimaLocalizacaoSalva = null;
+
       setTimeout(() => {
         setRondaId(null);
         setRondaDetails(null);
@@ -1030,10 +1202,8 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Erro ao parar rastreamento:', error);
 
-      // Mesmo se der erro na parada do background, continuar com o processo
       if (error instanceof Error && error.message.includes('TaskNotFoundException')) {
         console.log('Tarefa já foi removida, continuando processo...');
-        // Continuar com o processo mesmo se a tarefa não for encontrada
       } else {
         Alert.alert('Aviso', 'Ronda finalizada, mas houve um problema ao parar alguns serviços.');
       }
@@ -1049,25 +1219,20 @@ export default function HomeScreen() {
     // Se estiver no modo livre e o motivo for "ronda_em_site", detectar site automaticamente
     if (modoRota === 'livre' && motivo === 'ronda_em_site' && !proximoPonto) {
       try {
-        // Usar um estado para controlar o alerta em vez de Alert.alert diretamente
         setMostrandoAlertaDetecao(true);
 
-        // USAR A NOVA FUNÇÃO COM GEOHASH - buscar múltiplos sites
         const sitesProximos = await encontrarSitesProximosComGeohash(
           location.coords.latitude,
           location.coords.longitude,
-          10 // Buscar até 10 sites
+          10
         );
 
-        // Fechar o alerta de detecção
         setMostrandoAlertaDetecao(false);
 
         if (sitesProximos.length > 0) {
-          // Salvar os sites encontrados no estado
           setSitesProximosEncontrados(sitesProximos);
 
           if (sitesProximos.length === 1) {
-            // Se só tem um site, usar automaticamente
             const siteProximo = sitesProximos[0];
             setSiteCode(siteProximo.nome);
             setUf(siteProximo.uf);
@@ -1094,7 +1259,6 @@ export default function HomeScreen() {
               ]
             );
           } else {
-            // Se tem múltiplos sites, mostrar modal de seleção
             setMostrarSelecaoSites(true);
           }
         } else {
@@ -1116,7 +1280,6 @@ export default function HomeScreen() {
         return;
       } catch (error) {
         console.error('Erro ao detectar site:', error);
-        // Garantir que o alerta seja fechado em caso de erro
         setMostrandoAlertaDetecao(false);
         setShowCheckpointModal(true);
       }
@@ -1124,7 +1287,6 @@ export default function HomeScreen() {
 
     // Comportamento original para outros casos
     if (proximoPonto) {
-      // Se o site foi selecionado da rota OU está no modo predefinida, pular verificação de distância
       if (!siteSelecionadoDaRota && modoRota !== 'predefinida' && proximoPonto.latitude && proximoPonto.longitude) {
         const distancia = calcularDistancia(
           location.coords.latitude,
@@ -1149,7 +1311,6 @@ export default function HomeScreen() {
               {
                 text: 'Registrar',
                 onPress: () => {
-                  // Só atualizar se não tiver siteCode já definido
                   if (!siteCode || !uf) {
                     setSiteCode(proximoPonto.sigla);
                     setUf(proximoPonto.uf);
@@ -1164,7 +1325,6 @@ export default function HomeScreen() {
         }
       }
 
-      // Só atualizar se não tiver siteCode já definido (ex: quando clicou em um site da rota)
       if (!siteCode || !uf) {
         setSiteCode(proximoPonto.sigla);
         setUf(proximoPonto.uf);
@@ -1209,10 +1369,9 @@ export default function HomeScreen() {
 
       setCheckpoints(prev => [...prev, checkpointData]);
 
-      // Avançar para próximo ponto se estiver em uma rota pré-definida
       if (proximoPonto) {
         await avancarParaProximoPonto();
-        await salvarEstadoRota(); // Salvar estado atualizado da rota
+        await salvarEstadoRota();
       }
 
       Alert.alert('Checkpoint adicionado', `Site ${site} salvo com sucesso.`);
@@ -1221,7 +1380,7 @@ export default function HomeScreen() {
       setMotivo('');
       setImage(null);
       setComment('');
-      setSiteSelecionadoDaRota(false); // Reset do estado
+      setSiteSelecionadoDaRota(false);
       setShowCheckpointModal(false);
     } catch (error) {
       console.error('Erro ao adicionar checkpoint:', error);
@@ -1291,7 +1450,6 @@ export default function HomeScreen() {
         imageUrl = await uploadImage();
       }
 
-      // Criar checkpoint de troca de veículo
       const checkpointData = {
         site: 'TROCA_VEICULO',
         motivo: 'troca_de_veiculo',
@@ -1310,7 +1468,6 @@ export default function HomeScreen() {
       const checkpointsRef = collection(otherDb, 'rondas', rondaId, 'checkpoints');
       await addDoc(checkpointsRef, checkpointData);
 
-      // Atualizar a ronda com os novos dados do veículo
       const rondaRef = doc(otherDb, 'rondas', rondaId);
       await updateDoc(rondaRef, {
         ultimaTrocaVeiculo: {
@@ -1321,12 +1478,10 @@ export default function HomeScreen() {
           placaNovo: dados.placaNovo,
           imagem: imageUrl,
         },
-        // Atualizar também os dados atuais da ronda
         placaAtual: dados.placaNovo,
         kmAtual: parseFloat(dados.kmNovo),
       });
 
-      // Atualizar estado local
       setRondaDetails((prev: any) => ({
         ...prev,
         placaAtual: dados.placaNovo,
@@ -1341,7 +1496,6 @@ export default function HomeScreen() {
         },
       }));
 
-      // Adicionar ao histórico de checkpoints
       setCheckpoints(prev => [...prev, checkpointData]);
 
       Alert.alert('Sucesso', 'Troca de veículo registrada com sucesso!');
@@ -1351,38 +1505,6 @@ export default function HomeScreen() {
       console.error('Erro ao registrar troca de veículo:', error);
       Alert.alert('Erro', 'Não foi possível registrar a troca de veículo.');
     }
-  };
-
-  // Função para calcular distância entre duas coordenadas (fórmula de Haversine)
-  const calcularDistancia = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371; // Raio da Terra em quilômetros
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    const distancia = R * c; // Distância em quilômetros
-    return distancia;
-  };
-
-  // Função para verificar se está próximo de um ponto
-  const verificarProximidadeDoLocal = (
-    localizacaoAtual: { latitude: number; longitude: number } | null,
-    pontoAlvo: { latitude: number; longitude: number },
-    distanciaMaximaKm: number = 0.1 // 100 metros padrão
-  ): boolean => {
-    if (!localizacaoAtual) return false;
-
-    const distancia = calcularDistancia(
-      localizacaoAtual.latitude,
-      localizacaoAtual.longitude,
-      pontoAlvo.latitude,
-      pontoAlvo.longitude
-    );
-
-    return distancia <= distanciaMaximaKm;
   };
 
   // Função para abrir navegação até o ponto
@@ -1395,14 +1517,12 @@ export default function HomeScreen() {
     const destino = `${ponto.latitude},${ponto.longitude}`;
     const label = `${ponto.sigla}-${ponto.uf}`;
 
-    // URLs para diferentes apps de navegação
     const urls = {
       waze: `https://waze.com/ul?ll=${ponto.latitude},${ponto.longitude}&navigate=yes`,
       googleMaps: `https://www.google.com/maps/dir/?api=1&destination=${ponto.latitude},${ponto.longitude}&travelmode=driving`,
       appleMaps: `http://maps.apple.com/?daddr=${ponto.latitude},${ponto.longitude}&dirflg=d`
     };
 
-    // Mostrar opções para o usuário escolher
     Alert.alert(
       'Navegar até o local',
       `Como deseja navegar até ${label}?`,
@@ -1415,7 +1535,6 @@ export default function HomeScreen() {
               if (canOpen) {
                 await Linking.openURL(urls.waze);
               } else {
-                // Se Waze não estiver instalado, tenta Google Maps
                 await Linking.openURL(urls.googleMaps);
               }
             } catch (error) {
@@ -1449,12 +1568,12 @@ export default function HomeScreen() {
       Alert.alert('Site já concluído', `O site ${ponto.sigla}-${ponto.uf} já foi registrado.`);
       return;
     }
-    
+
     setSiteCode(ponto.sigla);
     setUf(ponto.uf);
     setMotivo('ronda_em_site');
-    setProximoPonto(ponto); // Definir o ponto selecionado como próximo ponto
-    setSiteSelecionadoDaRota(true); // Marcar que foi selecionado da rota
+    setProximoPonto(ponto);
+    setSiteSelecionadoDaRota(true);
   };
 
   // Atualize a função de busca manual para usar Geohash
@@ -1467,17 +1586,15 @@ export default function HomeScreen() {
     try {
       setMostrandoAlertaDetecao(true);
 
-      // USAR A NOVA FUNÇÃO COM GEOHASH
       const sitesProximos = await encontrarSitesProximosComGeohash(
         location.coords.latitude,
         location.coords.longitude,
-        10 // Buscar mais resultados
+        10
       );
 
       setMostrandoAlertaDetecao(false);
 
       if (sitesProximos.length > 0) {
-        // Usar o mesmo modal de seleção
         setSitesProximosEncontrados(sitesProximos);
         setMostrarSelecaoSites(true);
       } else {
@@ -1497,7 +1614,7 @@ export default function HomeScreen() {
   const encontrarSitesProximosComGeohash = async (latitude: number, longitude: number, limite: number = 10): Promise<Site[]> => {
     try {
       const center = [latitude, longitude];
-      const radiusInM = 10 * 1000; // 10km em metros
+      const radiusInM = 10 * 1000;
       const bounds = geohashQueryBounds(center, radiusInM);
 
       const promises = bounds.map((bound) => {
@@ -1547,7 +1664,6 @@ export default function HomeScreen() {
         }
       }
 
-      // Ordenar por distância e limitar resultados
       sitesProximos.sort((a, b) => {
         const distA = distanceBetween([a.latitude, a.longitude], center);
         const distB = distanceBetween([b.latitude, b.longitude], center);
@@ -1559,7 +1675,6 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Erro ao buscar múltiplos sites com Geohash:', error);
 
-      // Fallback
       const mapaDeCalorRef = collection(otherDb, 'mapaDeCalor');
       const q = query(mapaDeCalorRef, where('status', '==', 'ativo'));
       const querySnapshot = await getDocs(q);
@@ -1694,7 +1809,6 @@ export default function HomeScreen() {
                             </TouchableOpacity>
                           ))
                         ) : (
-                          // No JSX do modal, atualize a mensagem quando não houver rotas:
                           <View style={styles.semRotasContainer}>
                             <MaterialCommunityIcons name="map-marker-off" size={40} color="#999" />
                             <Text style={styles.semRotasText}>Nenhuma rota disponível</Text>
@@ -1767,8 +1881,9 @@ export default function HomeScreen() {
             onTakeImage={takeImage}
             onCancel={() => setShowPanicModal(false)}
             onConfirm={confirmPanicCheckpoint}
-            uploading={uploading}
-          />
+            uploading={uploading} comment={''} onCommentChange={function (text: string): void {
+              throw new Error('Function not implemented.');
+            } }          />
         </Modal>
 
         {/* Checkpoint Modal */}
@@ -1789,7 +1904,6 @@ export default function HomeScreen() {
             }}
             onConfirm={confirmCheckpoint}
             uploading={uploading}
-            // Novas props adicionadas
             onAutoDetect={buscarSitesProximosManualmente}
             location={location}
             modoRota={modoRota}
@@ -1858,7 +1972,7 @@ export default function HomeScreen() {
                 style={[styles.button, styles.buttonCancel, { marginTop: 5 }]}
                 onPress={() => {
                   setMostrarSelecaoSites(false);
-                  setMostrandoAlertaDetecao(false); // Limpar o alerta
+                  setMostrandoAlertaDetecao(false);
                 }}
               >
                 <Text style={styles.buttonText}>Cancelar</Text>
@@ -2022,8 +2136,8 @@ export default function HomeScreen() {
 
             <ScrollView style={styles.pontosList}>
               {rotaAtiva.pontos.map(ponto => (
-                <TouchableOpacity 
-                  key={ponto.id} 
+                <TouchableOpacity
+                  key={ponto.id}
                   style={[
                     styles.pontoItem,
                     ponto.concluido && styles.pontoConcluido
@@ -2045,7 +2159,7 @@ export default function HomeScreen() {
                     </Text>
                   )}
                   {!ponto.concluido && (
-                    <Text style={styles.pontoAction}>Toque para registrar</Text>
+                    <Text style={styles.pontoText}>Toque para registrar</Text>
                   )}
                 </TouchableOpacity>
               ))}
