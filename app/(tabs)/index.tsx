@@ -82,7 +82,7 @@ const verificarLogDuplicado = async (rondaId: string, timestamp: string, latitud
       where('longitude', '==', longitude),
       limit(1)
     );
-    
+
     const querySnapshot = await getDocs(q);
     return !querySnapshot.empty;
   } catch (error) {
@@ -115,19 +115,19 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
           const userRef = doc(otherDb, 'usuarios', uid);
 
           const timestamp = new Date().toISOString();
-          
+
           console.log('Localização em segundo plano recebida:', timestamp);
           console.log('Lat:', location.coords.latitude);
           console.log('Long:', location.coords.longitude);
 
           // Verificar se já existe log com esses dados
           const existeDuplicado = await verificarLogDuplicado(
-            rondaId, 
-            timestamp, 
-            location.coords.latitude, 
+            rondaId,
+            timestamp,
+            location.coords.latitude,
             location.coords.longitude
           );
-          
+
           if (existeDuplicado) {
             console.log('Log duplicado detectado (background), ignorando...');
             return;
@@ -531,22 +531,22 @@ export default function HomeScreen() {
 
   // Função para salvar log de localização com verificação de duplicidade
   const salvarLogLocalizacao = useCallback(async (
-    rondaId: string, 
-    userId: string, 
-    location: any, 
+    rondaId: string,
+    userId: string,
+    location: any,
     source: 'foreground' | 'background'
   ) => {
     try {
       const timestamp = new Date().toISOString();
-      
+
       // Verificar se já existe log com esses dados
       const existeDuplicado = await verificarLogDuplicado(
-        rondaId, 
-        timestamp, 
-        location.coords.latitude, 
+        rondaId,
+        timestamp,
+        location.coords.latitude,
         location.coords.longitude
       );
-      
+
       if (existeDuplicado) {
         console.log('Log duplicado detectado, ignorando...');
         return false;
@@ -569,12 +569,12 @@ export default function HomeScreen() {
 
       const logRef = collection(otherDb, 'log_ronda_rota');
       await addDoc(logRef, logData);
-      
+
       console.log(`Log de localização salvo (${source}):`, {
         timestamp: logData.timestamp,
         coords: `${logData.latitude.toFixed(6)}, ${logData.longitude.toFixed(6)}`
       });
-      
+
       return true;
     } catch (error) {
       console.error(`Erro ao salvar log de localização (${source}):`, error);
@@ -596,12 +596,12 @@ export default function HomeScreen() {
         },
         async (loc) => {
           setLocation(loc);
-          
+
           try {
             const agora = Date.now();
             const distanciaMinima = 50; // metros
             const tempoMinimo = 60000; // 1 minuto
-            
+
             // Verificar se já salvou uma localização recentemente
             if (ultimaLocalizacaoSalva) {
               const distancia = calcularDistancia(
@@ -610,19 +610,19 @@ export default function HomeScreen() {
                 ultimaLocalizacaoSalva.lat,
                 ultimaLocalizacaoSalva.lng
               ) * 1000; // converter para metros
-              
+
               const tempoDecorrido = agora - ultimaLocalizacaoSalva.timestamp;
-              
+
               // Só salvar se passou 1 minuto E se moveu mais de 50 metros
               if (tempoDecorrido < tempoMinimo && distancia < distanciaMinima) {
                 console.log('Ignorando localização - menos de 1 minuto e menos de 50 metros de movimento');
                 return;
               }
             }
-            
+
             // Salvar log de localização
             await salvarLogLocalizacao(rondaId, userId, loc, 'foreground');
-            
+
             // Atualizar timestamp da última localização salva
             ultimaLocalizacaoSalva = {
               timestamp: agora,
@@ -649,8 +649,8 @@ export default function HomeScreen() {
               })
             ]);
 
-            console.log('Localização atualizada - tempo:', Math.round((Date.now() - agora)/1000), 's atrás, distância:', 
-              ultimaLocalizacaoSalva ? calcularDistancia(loc.coords.latitude, loc.coords.longitude, ultimaLocalizacaoSalva.lat, ultimaLocalizacaoSalva.lng)*1000 : 0, 'metros');
+            console.log('Localização atualizada - tempo:', Math.round((Date.now() - agora) / 1000), 's atrás, distância:',
+              ultimaLocalizacaoSalva ? calcularDistancia(loc.coords.latitude, loc.coords.longitude, ultimaLocalizacaoSalva.lat, ultimaLocalizacaoSalva.lng) * 1000 : 0, 'metros');
           } catch (err) {
             console.error('Erro ao atualizar localização:', err);
           }
@@ -1041,10 +1041,34 @@ export default function HomeScreen() {
 
   // Confirmar início da ronda
   const confirmStartTracking = async () => {
+
+    const kmInicioNum = Number(kmInicial);
+    const placa = placaInicial;
+
     if (!kmInicial || !placaInicial) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
       return;
     }
+
+    // inteiro e não negativo
+    if (isNaN(kmInicioNum) || kmInicioNum < 0) {
+      Alert.alert("Erro", "O KM inicial deve ser um número inteiro não negativo.");
+      return;
+    }
+    // trava: não pode ser menor que último KM salvo da mesma placa
+    const ultimoKm = await AsyncStorage.getItem("ultimoKmFinal");
+    const ultimaPlaca = await AsyncStorage.getItem("ultimaPlaca");
+
+    if (ultimoKm && ultimaPlaca === placa) {
+      if (kmInicioNum < Number(ultimoKm)) {
+        Alert.alert(
+          "Erro",
+          `O KM inicial (${kmInicioNum}) não pode ser menor que o último KM registrado (${ultimoKm}).`
+        );
+        return;
+      }
+    }
+
 
     if (!uid) {
       Alert.alert('Erro', 'UID do usuário não encontrado.');
@@ -1116,15 +1140,42 @@ export default function HomeScreen() {
 
   // Confirmar parada da ronda
   const confirmStopTracking = async () => {
+
+    const kmFimNum = Number(kmFinal);
+    const kmIniNum = Number(kmInicial);
+    const placa = placaFinal;
+
     if (!kmFinal || !placaFinal) {
       Alert.alert('Erro', 'Por favor, informe a quilometragem final e a placa do veículo.');
       return;
     }
 
-    if (parseFloat(kmFinal) <= parseFloat(kmInicial)) {
+    if (isNaN(kmFimNum) || kmFimNum < 0) {
+      Alert.alert("Erro", "O KM final deve ser um número inteiro não negativo.");
+      return;
+    }
+
+
+    if (kmFinal <= kmInicial) {
       Alert.alert('Erro', 'A quilometragem final não pode ser menor que a quilometragem inicial.');
       return;
     }
+
+    // trava de histórico por placa
+    const ultimoKm = await AsyncStorage.getItem("ultimoKmFinal");
+    const ultimaPlaca = await AsyncStorage.getItem("ultimaPlaca");
+
+    if (ultimoKm && ultimaPlaca === placa) {
+      if (kmFimNum < Number(ultimoKm)) {
+        Alert.alert(
+          "Erro",
+          `O KM final (${kmFimNum}) não pode ser menor que o último KM registrado (${ultimoKm}).`
+        );
+        return;
+      }
+    }
+    await AsyncStorage.setItem("ultimoKmFinal", kmFimNum.toString());
+    await AsyncStorage.setItem("ultimaPlaca", placa);
 
     try {
       if (subscription) {
@@ -1162,7 +1213,12 @@ export default function HomeScreen() {
             })
           }),
           updateDoc(userRef, {
-            status_ronda: "Parado"
+            status_ronda: "Parado",
+            kmUltimo: kmFimNum,
+            placaUltima: placa,
+            kmAtualizadoEm: new Date().toISOString(),
+
+
           })
         ]);
 
@@ -1883,7 +1939,7 @@ export default function HomeScreen() {
             onConfirm={confirmPanicCheckpoint}
             uploading={uploading} comment={''} onCommentChange={function (text: string): void {
               throw new Error('Function not implemented.');
-            } }          />
+            }} />
         </Modal>
 
         {/* Checkpoint Modal */}

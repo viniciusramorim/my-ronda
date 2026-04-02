@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet,Alert } from 'react-native';
 
 interface KmModalProps {
   visible: boolean;
@@ -31,11 +31,11 @@ const KmModal: React.FC<KmModalProps> = ({
   // Função para aplicar a máscara da placa
   const handlePlacaChange = (text: string) => {
     // Remove tudo que não é letra ou número e converte para maiúsculo
-    let cleaned = text.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    let cleaned = text.replace(/[^A-ZA-z0-9]/g, '').toUpperCase();
     
     // Aplica a máscara AAA-0000
     if (cleaned.length > 3) {
-      cleaned = cleaned.substring(0, 3) + '-' + cleaned.substring(3, 7);
+      cleaned = cleaned.substring(0, 3) + '-' + cleaned.substring(3);
     }
     
     // Limita o tamanho total (3 letras + 1 hífen + 4 números = 8 caracteres)
@@ -46,8 +46,13 @@ const KmModal: React.FC<KmModalProps> = ({
     onPlacaChange(cleaned);
   };
 
+const handleKmChange = (text: string) => {
+  const cleaned = text.replace(/\D/g, ""); // remove tudo que não for número
+  onKmChange(cleaned);
+};
+
   // Função para aplicar a máscara do KM (100.000)
-  const handleKmChange = (text: string) => {
+  {/*const handleKmChange = (text: string) => {
     // Remove tudo que não é número, exceto ponto
     let cleaned = text.replace(/[^\d.]/g, '');
     
@@ -74,7 +79,7 @@ const KmModal: React.FC<KmModalProps> = ({
     cleaned = numberParts.join('.');
     
     onKmChange(cleaned);
-  };
+  };*/}
 
   // Função para formatar o valor do KM para exibição (adiciona separadores de milhar)
   const formatKmDisplay = (value: string) => {
@@ -90,6 +95,23 @@ const KmModal: React.FC<KmModalProps> = ({
     
     return parts[1] ? integerPart + ',' + parts[1] : integerPart;
   };
+  
+const handleConfirmPress = () => {
+  if (!kmValue.trim()) {
+    Alert.alert('Erro', 'O campo KM é obrigatório.');
+    return;
+  }
+
+  const kmNum = Number(kmValue);
+
+  if (isNaN(kmNum) || kmNum < 0) {
+    Alert.alert('Erro', 'O KM deve ser um número inteiro não negativo.');
+    return;
+  }
+
+  onConfirm();
+};
+
 
   if (!visible || !type) return null;
 
@@ -104,7 +126,7 @@ const KmModal: React.FC<KmModalProps> = ({
           style={styles.modalInput}
           placeholder={`Digite o KM ${type === 'inicio' ? 'inicial' : 'final'} (ex: 100.000)`}
           placeholderTextColor="#999"
-          keyboardType="decimal-pad"
+          keyboardType="numeric"
           value={formatKmDisplay(kmValue)}
           onChangeText={handleKmChange}
           editable={!uploading}
@@ -153,7 +175,7 @@ const KmModal: React.FC<KmModalProps> = ({
 
           <TouchableOpacity
             style={[styles.modalButton, styles.modalButtonConfirm]}
-            onPress={onConfirm}
+            onPress={handleConfirmPress}
             disabled={uploading}
           >
             <Text style={styles.modalButtonText}>Confirmar</Text>
