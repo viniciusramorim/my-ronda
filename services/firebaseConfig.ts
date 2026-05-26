@@ -25,8 +25,9 @@ const db = firebase.firestore();
 
 // Firestore para a ronda digital (modular)
 const otherDb = getFirestore(app, 'ronda-digital');
+const aprDb = getFirestore(app, 'default');
 
 // Storage (modular - recomendado para novas implementações)
 const storage = getStorage(app);
 
-export { firebase, db, otherDb, storage };
+export { firebase, db, otherDb, storage, aprDb };

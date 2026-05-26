@@ -1,7 +1,73 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet, ScrollView, Alert, Linking } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { otherDb } from '@/services/firebaseConfig';
+import { useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+
+type UsuarioFirestore = {
+  regional?: string;
+  ufsPermitidas?: string[];
+};
+
+type RegionalCodigo = 'SP' | 'SU' | 'NE' | 'CO_N' | 'SE';
+
+interface Props {
+  visible: boolean;
+  siteCode: string;
+  onSiteCodeChange: (text: string) => void;
+  uf: string;
+  onUfChange: (value: string) => void;
+  comment: string;
+  onCommentChange: (text: string) => void;
+  image: string | null;
+  onTakeImage: () => void;
+  onCancel: () => void;
+   onConfirm: (tipo: 'site' | 'loja' | null) => void;
+  uploading: boolean;
+}
+
+const normalizeRegional = (regional?: string): RegionalCodigo | null => {
+  if (!regional) return null;
+  const r = regional.trim().toUpperCase();
+
+
+  if (r === 'SP') return 'SP';
+  if (r === 'SU') return 'SU';
+  if (r === 'NE') return 'NE';
+  if (r === 'SE') return 'SE';
+  if (r === 'CO_N') return 'CO_N';
+
+  return null;
+};
+
+const getUfsByRegional = (regional: RegionalCodigo): string[] => {
+  switch (regional) {
+    case 'SP':
+      return ['SP'];
+
+    case 'SU':
+      return ['PR', 'SC', 'RS'];
+
+    case 'SE':
+      return ['RJ', 'MG', 'ES'];
+
+    case 'NE':
+      return ['AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE'];
+
+    case 'CO_N':
+      return [
+        'DF', 'GO', 'MT', 'MS',
+        'AC', 'AP', 'AM', 'PA', 'RO', 'RR', 'TO',
+      ];
+
+    default:
+      return [];
+  }
+};
 
 interface CheckpointModalProps {
   visible: boolean;
@@ -14,12 +80,12 @@ interface CheckpointModalProps {
   image: string | null;
   onTakeImage: () => void;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (tipo: 'site' | 'loja' | null) => void;
   uploading: boolean;
   // Novas props para detecção automática
   onAutoDetect?: () => void;
   location?: any;
-  modoRota?: 'livre' | 'predefinida' | null;
+
 }
 
 const CheckpointModal: React.FC<CheckpointModalProps> = ({
@@ -37,18 +103,27 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
   uploading,
   onAutoDetect,
   location,
-  modoRota,
+  ///modoRota,
 }) => {
+  const [tipoSigla, setTipoSigla] = useState<'site' | 'loja' | null>(null);
+
+  const [userRegional, setUserRegional] = useState<RegionalCodigo | null>(null);
+  const [ufsPermitidas, setUfsPermitidas] = useState<string[]>([]);
+  const [siglaMovelInput, setSiglaMovelInput] = useState('');
+  const [confirmada, setConfirmada] = useState(false);
+  const [sucesso, setSucesso] = useState(false);
+
+
   // Função para aplicar a máscara da sigla (3 caracteres maiúsculos)
   const handleSiglaChange = (text: string) => {
     // Remove caracteres especiais, mantém apenas letras e números
     let cleaned = text.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    
+
     // Limita a 3 caracteres
     if (cleaned.length > 3) {
       cleaned = cleaned.substring(0, 3);
     }
-    
+
     onSiteCodeChange(cleaned);
   };
 
@@ -65,9 +140,36 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
   };
 
   // Verificar se pode mostrar o botão de detecção automática
-  const mostrarBotaoAutoDetect = modoRota === 'livre' && location && onAutoDetect;
+  //const mostrarBotaoAutoDetect = modoRota === 'livre' && location && onAutoDetect;
 
-  if (!visible) return null;
+  /* ===== BUSCA DO USUÁRIO (REGIONAL + UFs) ===== */
+  useEffect(() => {
+    if (!visible) return;
+    const buscarUsuario = async () => {
+      const uid = await AsyncStorage.getItem('userUid');
+      if (!uid) return;
+
+      const snap = await getDoc(doc(otherDb, 'usuarios', uid));
+      if (!snap.exists()) return;
+
+      const data = snap.data() as UsuarioFirestore;
+
+      const regionalNormalizada =
+        normalizeRegional(data.regional);
+
+      setUserRegional(regionalNormalizada);
+
+      if (data.ufsPermitidas && data.ufsPermitidas.length > 0) {
+        setUfsPermitidas(data.ufsPermitidas);
+      } else if (regionalNormalizada) {
+        setUfsPermitidas(
+          getUfsByRegional(regionalNormalizada)
+        );
+      }
+    };
+
+    buscarUsuario();
+  }, [visible]);
 
   return (
     <View style={styles.modalContainer}>
@@ -76,7 +178,7 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
           <Text style={styles.modalTitle}>Registrar Ronda</Text>
 
           {/* Botão de detecção automática - apenas no modo livre */}
-          {mostrarBotaoAutoDetect && (
+          
             <TouchableOpacity
               style={styles.autoDetectButton}
               onPress={handleAutoDetect}
@@ -87,9 +189,32 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
                 Buscar Site Mais Próximo
               </Text>
             </TouchableOpacity>
-          )}
+          
 
-          <Text style={styles.sectionLabel}>Sigla do Site</Text>
+          <Text style={styles.label}>Tipo</Text>
+
+          <View style={styles.row}>
+            {['site', 'loja'].map(t => (
+              <TouchableOpacity
+                key={t}
+                style={[
+                  styles.typeBtn,
+                  tipoSigla === t && styles.selected
+                ]}
+                onPress={() => {
+                  setTipoSigla(t as 'site' | 'loja');
+                  setConfirmada(false);
+                  setSucesso(false);
+                  setSiglaMovelInput('');
+                }}
+              >
+                <Text>{t.toUpperCase()}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+
+          {/*<Text style={styles.sectionLabel}>Sigla do Site</Text>
           <TextInput
             style={styles.modalInput}
             placeholder="Digite a sigla (ex: SP1) - Máx. 3 letras"
@@ -99,9 +224,9 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
             editable={!uploading}
             maxLength={3}
             autoCapitalize="characters"
-          />
+          />*/}
 
-          <Text style={styles.sectionLabel}>UF</Text>
+          {/*<Text style={styles.sectionLabel}>UF</Text>
           <View style={styles.pickerContainerUF}>
             <Picker
               selectedValue={uf}
@@ -138,7 +263,33 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
               <Picker.Item label="SE" value="SE" />
               <Picker.Item label="TO" value="TO" />
             </Picker>
+          </View>*/}
+
+
+          <Text style={styles.label}>UF</Text>
+          <View style={styles.ufContainer}>
+            <Picker selectedValue={uf} onValueChange={onUfChange}>
+              <Picker.Item label="Selecione" value="" />
+              {ufsPermitidas.map(u => (
+                <Picker.Item key={u} label={u} value={u} />
+              ))}
+            </Picker>
           </View>
+          <Text style={styles.label}>Buscar local</Text>
+
+          {/* ✅ COMPONENTE DE BUSCA FUNCIONANDO */}
+         <TextInput
+            style={styles.modalInput}
+            placeholder="Digite a sigla (ex: SP1) - Máx. 3 letras"
+            placeholderTextColor="#999"
+            value={siteCode}
+            onChangeText={handleSiglaChange}
+            editable={!uploading}
+            maxLength={3}
+            autoCapitalize="characters"
+          />
+
+         
 
           <Text style={styles.sectionLabel}>Comentário</Text>
           <TextInput
@@ -160,10 +311,10 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
             onPress={onTakeImage}
             disabled={uploading}
           >
-            <MaterialCommunityIcons 
-              name={image ? "camera" : "camera-plus"} 
-              size={20} 
-              color="#fff" 
+            <MaterialCommunityIcons
+              name={image ? "camera" : "camera-plus"}
+              size={20}
+              color="#fff"
             />
             <Text style={styles.buttonText}>
               {image ? 'Alterar Imagem' : 'Adicionar Imagem'}
@@ -198,12 +349,12 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
 
             <TouchableOpacity
               style={[
-                styles.modalButton, 
+                styles.modalButton,
                 styles.modalButtonConfirm,
                 (!siteCode || !uf) && styles.buttonDisabled
               ]}
-              onPress={onConfirm}
-              disabled={uploading || !siteCode || !uf}
+              onPress={() => onConfirm(tipoSigla)}
+              disabled={uploading || !siteCode || !uf || !tipoSigla}
             >
               <Text style={styles.modalButtonText}>
                 {uploading ? 'Enviando...' : 'Confirmar'}
@@ -403,6 +554,173 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontStyle: 'italic',
   },
+
+  tipoContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 15,
+  },
+  tipoButton: {
+    flex: 1,
+    marginHorizontal: 4,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: '#e9ecef',
+    borderWidth: 1,
+    borderColor: '#ced4da',
+  },
+  tipoButtonSelecionado: {
+    backgroundColor: '#007BFF',
+    borderColor: '#0056b3',
+  },
+  tipoButtonText: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  listaLocais: {
+    marginBottom: 15,
+  },
+  localItem: {
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    marginBottom: 8,
+    backgroundColor: '#f8f9fa',
+  },
+  localSigla: {
+    fontWeight: 'bold',
+    fontSize: 14,
+    color: '#333',
+  },
+  localNome: {
+    fontSize: 13,
+    color: '#666',
+  },
+  selectInput: {
+    height: 45,
+    borderWidth: 1,
+    borderRadius: 8,
+    borderColor: '#ddd',
+    paddingHorizontal: 12,
+    backgroundColor: '#f9f9f9',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  selectText: {
+    fontSize: 16,
+  },
+  selectPlaceholder: {
+    fontSize: 16,
+    color: '#999',
+  },
+
+  buscarButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#007BFF',
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+  buscarButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginLeft: 8,
+  },
+
+  selectTextInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#333',
+    paddingVertical: 0,
+  },
+
+
+  autocompleteContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#f9f9f9',
+  },
+
+  autocompleteInput: {
+    flex: 1,
+    height: 45,
+    fontSize: 16,
+    color: '#333',
+  },
+
+  dropdown: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    marginTop: 4,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+
+  dropdownItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+
+  dropdownTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+
+  dropdownSubtitle: {
+    fontSize: 13,
+    color: '#666',
+  },
+
+  siglaSucesso: {
+    marginTop: 6,
+    color: '#28a745',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  autoBtn: {
+    backgroundColor: '#28a745',
+    padding: 8,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+
+  ufContainer: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    marginTop: 5,
+    marginBottom: 10,
+    backgroundColor: '#f9f9f9',
+  },
+
+  autoText: { color: '#fff', marginLeft: 6 },
+  label: { marginTop: 10, fontWeight: '600' },
+  input: { borderWidth: 1, borderRadius: 8, padding: 10, marginTop: 5 },
+  row: { flexDirection: 'row', marginTop: 10 },
+  typeBtn: { flex: 1, borderWidth: 1, padding: 10, margin: 4 },
+  selected: { backgroundColor: '#e0f0ff' },
+  option: { padding: 10, borderBottomWidth: 1 },
+  ok: { color: '#28a745', marginTop: 6 },
+  error: { color: '#007BFF', marginTop: 6 },
+
+
 });
 
 export default CheckpointModal;

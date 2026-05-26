@@ -1,24 +1,35 @@
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet,Alert } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Image, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import { otherDb } from '../../services/firebaseConfig';
+import { collection, getDocs } from 'firebase/firestore';
 
 interface KmModalProps {
   visible: boolean;
   type: 'inicio' | 'fim' | null;
   kmValue: string;
+  kmInicial: string;
   onKmChange: (text: string) => void;
   placaValue: string;
   onPlacaChange: (text: string) => void;
   image: string | null;
   onTakeImage: () => void;
   onCancel: () => void;
-  onConfirm: () => void;
+  onConfirm: (tipoRonda: string | null) => void;
   uploading: boolean;
+
+  uid: string | null;
+  buscarUltimoKmPorPlaca: (
+    uid: string,
+    placa: string
+  ) => Promise<number | null>;
+
 }
 
 const KmModal: React.FC<KmModalProps> = ({
   visible,
   type,
   kmValue,
+  kmInicial,
   onKmChange,
   placaValue,
   onPlacaChange,
@@ -27,29 +38,36 @@ const KmModal: React.FC<KmModalProps> = ({
   onCancel,
   onConfirm,
   uploading,
+  uid,
+  buscarUltimoKmPorPlaca
 }) => {
+  //campo de classificação de ronda motorizada/qualificada
+
+  const [tipoRonda, setTipoRonda] = React.useState<string | null>(null);
+  const [opcoesRonda, setOpcoesRonda] = React.useState<any[]>([]);
+
   // Função para aplicar a máscara da placa
   const handlePlacaChange = (text: string) => {
     // Remove tudo que não é letra ou número e converte para maiúsculo
     let cleaned = text.replace(/[^A-ZA-z0-9]/g, '').toUpperCase();
-    
+
     // Aplica a máscara AAA-0000
     if (cleaned.length > 3) {
       cleaned = cleaned.substring(0, 3) + '-' + cleaned.substring(3);
     }
-    
+
     // Limita o tamanho total (3 letras + 1 hífen + 4 números = 8 caracteres)
     if (cleaned.length > 8) {
       cleaned = cleaned.substring(0, 8);
     }
-    
+
     onPlacaChange(cleaned);
   };
 
-const handleKmChange = (text: string) => {
-  const cleaned = text.replace(/\D/g, ""); // remove tudo que não for número
-  onKmChange(cleaned);
-};
+  const handleKmChange = (text: string) => {
+    const cleaned = text.replace(/[^0-9.,]/g, ""); // remove tudo que não for número
+    onKmChange(cleaned);
+  };
 
   // Função para aplicar a máscara do KM (100.000)
   {/*const handleKmChange = (text: string) => {
@@ -79,7 +97,7 @@ const handleKmChange = (text: string) => {
     cleaned = numberParts.join('.');
     
     onKmChange(cleaned);
-  };*/}
+  };
 
   // Função para formatar o valor do KM para exibição (adiciona separadores de milhar)
   const formatKmDisplay = (value: string) => {
@@ -94,23 +112,93 @@ const handleKmChange = (text: string) => {
     }
     
     return parts[1] ? integerPart + ',' + parts[1] : integerPart;
+  };*/}
+
+  const formatKmDisplay = (value: string) => {
+    if (!value) return "";
+    return value.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   };
-  
-const handleConfirmPress = () => {
-  if (!kmValue.trim()) {
-    Alert.alert('Erro', 'O campo KM é obrigatório.');
+  const normalizarKm = (valor: string): number => {
+    if (!valor) return NaN;
+
+    const tratado = valor.replace(",", ".");
+    const numero = parseFloat(tratado);
+
+    if (isNaN(numero)) return NaN;
+
+    return Math.floor(numero); // sempre inteiro
+  };
+
+  const handleConfirmPress = async () => {
+    if (!kmValue.trim()) {
+      Alert.alert('Erro', 'O campo KM é obrigatório.');
+      return;
+    }
+
+
+    const kmAtual = normalizarKm(kmValue);
+    const kmIni = normalizarKm(kmInicial);
+
+
+    if (Number.isNaN(kmAtual) || kmAtual < 0) {
+      Alert.alert('Erro', 'O KM deve ser um número inteiro válido.');
+      return;
+    }
+
+
+    if (uid) {
+      const ultimoKm = await buscarUltimoKmPorPlaca(uid, placaValue);
+
+      if (ultimoKm !== null && kmAtual < ultimoKm) {
+        Alert.alert(
+          'Erro de Quilometragem',
+          `O KM informado (${kmAtual}) é menor que o último registrado para esta placa (${ultimoKm}).`
+        );
+        return;
+      }
+    }
+
+    // VERIFICAÇÃO DE KM FINAL
+    if (type === 'fim') {
+     
+if (!isNaN(kmIni) && kmAtual <= kmIni) {
+    Alert.alert(
+      'Erro de quilometragem',
+      `O KM final (${kmAtual}) deve ser maior que o KM inicial (${kmIni}).`
+    );
     return;
   }
 
-  const kmNum = Number(kmValue);
+  const diferenca = kmAtual - kmIni;
 
-  if (isNaN(kmNum) || kmNum < 0) {
-    Alert.alert('Erro', 'O KM deve ser um número inteiro não negativo.');
-    return;
-  }
+      if (diferenca >= 1500) {
+        Alert.alert(
+          'Distância não permitida',
+          `Foram percorridos${diferenca.toFixed(0)} km.\nO limite máximo é 1.500 km.`
+        );
+        return;
+      }
 
-  onConfirm();
-};
+      if (diferenca > 1000) {
+        Alert.alert(
+          'Atenção',
+          `Foram percorridos ${diferenca.toFixed(0)} km.\nDeseja confirmar mesmo assim?`,
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            {
+              text: 'Confirmar',
+              onPress: () => onConfirm(tipoRonda),
+
+            }
+          ]
+        );
+        return;
+      }
+    }
+
+
+    onConfirm(tipoRonda);
+  };
 
 
   if (!visible || !type) return null;
@@ -254,6 +342,33 @@ const styles = StyleSheet.create({
   modalButtonText: {
     color: '#fff',
     textAlign: 'center',
+  },
+  checkboxRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderWidth: 2,
+    borderColor: "#333",
+    marginRight: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 4,
+  },
+
+  checkboxSelected: {
+    width: 14,
+    height: 14,
+    backgroundColor: "#28a745",
+    borderRadius: 3,
+  },
+
+  checkboxLabel: {
+    fontSize: 15,
   },
 });
 

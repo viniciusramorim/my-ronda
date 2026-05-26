@@ -6,12 +6,12 @@ import * as ImagePicker from 'expo-image-picker';
 import * as TaskManager from 'expo-task-manager';
 import * as BackgroundFetch from 'expo-background-fetch';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { doc, setDoc, updateDoc, collection, addDoc, getDoc, query, where, getDocs, limit } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, collection, addDoc, getDoc, query, where, getDocs, limit, orderBy, startAt, endAt} from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { otherDb, storage } from '@/services/firebaseConfig';
+import { aprDb, otherDb, storage } from '@/services/firebaseConfig';
 import { useRonda } from './_layout';
 import styles from '@/assets/styles/stylesIndex';
 import KmModal from '@/components/modals/KmModal';
@@ -27,6 +27,7 @@ interface Checkpoint {
   motivo: string;
   timestamp: string;
   imageUrl?: string;
+  tipo?: 'site' | 'loja' | null;
 }
 
 interface RotaPreDefinida {
@@ -58,12 +59,12 @@ interface Site {
   longitude: number;
   raio: number;
   uf: string;
-  regional: string;
+  //regional: string;
   status: string;
   createdBy: string;
   idOriginalPerimetro: string;
-  dataInicio: any;
-  dataFim: any | null;
+  //dataInicio: any;
+  //dataFim: any | null;
   geohash?: string;
 }
 
@@ -202,6 +203,61 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 
   return BackgroundFetch.BackgroundFetchResult.NewData;
 });
+
+const buscarUltimoKmPorUsuarioEPlaca = async (
+  uid: string,
+  placaAtual: string
+): Promise<number | null> => {
+  try {
+    // Buscar usuário
+    const userRef = doc(otherDb, "usuarios", uid);
+    const userSnap = await getDoc(userRef);
+
+    if (!userSnap.exists()) {
+      return null;
+    }
+
+    const userData = userSnap.data();
+    const placaUltima = userData.placaUltima;
+
+    if (!placaUltima || placaUltima !== placaAtual) {
+      return null;
+    }
+
+    const q = query(
+      collection(otherDb, "rondas"),
+      where("uid", "==", uid),
+      where("placaFinal", "==", placaUltima),
+      orderBy("fim", "desc"),
+      limit(1)
+    );
+
+    const rondasSnap = await getDocs(q);
+
+    if (!rondasSnap.empty) {
+      const data = rondasSnap.docs[0].data();
+      return typeof data.kmFinal === "number" ? data.kmFinal : null;
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Erro ao buscar último KM:", error);
+
+    // ✅ IMPORTANTE:
+    // Se der erro de índice, NÃO travar o usuário
+    return null;
+  }
+};
+const normalizarKm = (valor: string): number => {
+  if (!valor) return NaN;
+
+  const tratado = valor.replace(",", ".");
+  const numero = parseFloat(tratado);
+
+  if (isNaN(numero)) return NaN;
+
+  return Math.floor(numero);
+};
 
 export default function HomeScreen() {
   const { isTracking, setIsTracking } = useRonda();
@@ -691,12 +747,6 @@ export default function HomeScreen() {
           const data = rondaDoc.data();
           setRondaDetails(data);
 
-          // Restaurar modo da rota
-          if (modoRotaSalvo) {
-            setModoRota(modoRotaSalvo as 'livre' | 'predefinida');
-          } else if (data.modoRota) {
-            setModoRota(data.modoRota);
-          }
 
           // Restaurar rota ativa se existir
           if (rotaAtivaSalva && modoRotaSalvo === 'predefinida') {
@@ -1042,50 +1092,24 @@ export default function HomeScreen() {
   // Confirmar início da ronda
   const confirmStartTracking = async () => {
 
-    const kmInicioNum = Number(kmInicial);
-    const placa = placaInicial;
+    const kmInicioNum = normalizarKm(kmInicial);
+    //const placa = placaInicial;
 
-    if (!kmInicial || !placaInicial) {
-      Alert.alert('Erro', 'Por favor, informe a quilometragem inicial e a placa do veículo.');
+    if (!uid || !placaInicial) {
+      Alert.alert('Erro', 'Por favor, informe a placa do veículo.');
       return;
     }
-
-    // inteiro e não negativo
-    if (isNaN(kmInicioNum) || kmInicioNum < 0) {
-      Alert.alert("Erro", "O KM inicial deve ser um número inteiro não negativo.");
-      return;
-    }
-    // trava: não pode ser menor que último KM salvo da mesma placa
-    const ultimoKm = await AsyncStorage.getItem("ultimoKmFinal");
-    const ultimaPlaca = await AsyncStorage.getItem("ultimaPlaca");
-
-    if (ultimoKm && ultimaPlaca === placa) {
-      if (kmInicioNum < Number(ultimoKm)) {
-        Alert.alert(
-          "Erro",
-          `O KM inicial (${kmInicioNum}) não pode ser menor que o último KM registrado (${ultimoKm}).`
-        );
-        return;
-      }
-    }
-
-
-    if (!uid) {
-      Alert.alert('Erro', 'UID do usuário não encontrado.');
-      return;
-    }
-
     try {
       const novaRondaId = `ronda_${new Date().getTime()}`;
       const rondaRef = doc(otherDb, 'rondas', novaRondaId);
-      const userRef = doc(otherDb, 'usuarios', uid);
+
 
       const imageUrl = await uploadImage();
 
       const rondaData = {
         nomeRonda: `Ronda_${new Date().toLocaleString()}`,
         inicio: new Date().toISOString(),
-        kmInicial: parseFloat(kmInicial),
+        kmInicial: kmInicioNum,
         placaInicial,
         ultimaLocalizacao: null,
         uid: uid,
@@ -1141,42 +1165,28 @@ export default function HomeScreen() {
   // Confirmar parada da ronda
   const confirmStopTracking = async () => {
 
-    const kmFimNum = Number(kmFinal);
-    const kmIniNum = Number(kmInicial);
-    const placa = placaFinal;
+    const kmFimNum = normalizarKm(kmFinal);
+    const kmIniNum = normalizarKm(kmInicial);
 
-    if (!kmFinal || !placaFinal) {
-      Alert.alert('Erro', 'Por favor, informe a quilometragem final e a placa do veículo.');
+    if (isNaN(kmFimNum) || isNaN(kmIniNum)) {
+      Alert.alert('Erro', 'Valores de KM inválidos.');
       return;
     }
 
-    if (isNaN(kmFimNum) || kmFimNum < 0) {
-      Alert.alert("Erro", "O KM final deve ser um número inteiro não negativo.");
+    // ✅ NOVO — regra principal (não pode ser negativo)
+    if (kmFimNum <= kmIniNum) {
+      Alert.alert(
+        'Erro de quilometragem',
+        `O KM final (${kmFimNum}) deve ser maior que o KM inicial (${kmIniNum}).`
+      );
       return;
     }
 
 
-    if (kmFinal <= kmInicial) {
-      Alert.alert('Erro', 'A quilometragem final não pode ser menor que a quilometragem inicial.');
+    if (!rondaId || !uid) {
+      Alert.alert('Erro', 'Ronda não encontrada.');
       return;
     }
-
-    // trava de histórico por placa
-    const ultimoKm = await AsyncStorage.getItem("ultimoKmFinal");
-    const ultimaPlaca = await AsyncStorage.getItem("ultimaPlaca");
-
-    if (ultimoKm && ultimaPlaca === placa) {
-      if (kmFimNum < Number(ultimoKm)) {
-        Alert.alert(
-          "Erro",
-          `O KM final (${kmFimNum}) não pode ser menor que o último KM registrado (${ultimoKm}).`
-        );
-        return;
-      }
-    }
-    await AsyncStorage.setItem("ultimoKmFinal", kmFimNum.toString());
-    await AsyncStorage.setItem("ultimaPlaca", placa);
-
     try {
       if (subscription) {
         subscription.remove();
@@ -1190,8 +1200,7 @@ export default function HomeScreen() {
       if (rondaId && uid) {
         const rondaRef = doc(otherDb, 'rondas', rondaId);
         const userRef = doc(otherDb, 'usuarios', uid);
-
-        const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
+        const distanciaPercorrida = kmFimNum - kmIniNum;
         const imageUrl = await uploadImage();
 
         const pontosConcluidos = rotaAtiva ? rotaAtiva.pontos.filter(p => p.concluido).length : 0;
@@ -1199,7 +1208,7 @@ export default function HomeScreen() {
         await Promise.all([
           updateDoc(rondaRef, {
             fim: new Date().toISOString(),
-            kmFinal: parseFloat(kmFinal),
+            kmFinal: kmFimNum,
             placaFinal,
             distanciaPercorrida,
             imagemFinal: imageUrl,
@@ -1215,7 +1224,7 @@ export default function HomeScreen() {
           updateDoc(userRef, {
             status_ronda: "Parado",
             kmUltimo: kmFimNum,
-            placaUltima: placa,
+            placaUltima: placaFinal,
             kmAtualizadoEm: new Date().toISOString(),
 
 
@@ -1225,10 +1234,11 @@ export default function HomeScreen() {
         setRondaDetails((prev: any) => ({
           ...prev,
           fim: new Date().toISOString(),
-          kmFinal: parseFloat(kmFinal),
+          kmFinal: kmFimNum,
           placaFinal,
           distanciaPercorrida,
           imagemFinal: imageUrl,
+          //tipoRonda: tipoSelecionado,
         }));
       }
 
@@ -1393,13 +1403,13 @@ export default function HomeScreen() {
       } else if (motivo === 'troca_de_veiculo') {
         setShowTrocaVeiculoModal(true);
       } else {
-        confirmCheckpoint();
+        confirmCheckpoint(null);
       }
     }
   };
 
   // Confirmar checkpoint
-  const confirmCheckpoint = async () => {
+  const confirmCheckpoint = async (tipo: 'site' | 'loja' | null) => {
     try {
       let imageUrl = null;
       if ((motivo === 'ronda_em_site' || proximoPonto) && image) {
@@ -1413,6 +1423,7 @@ export default function HomeScreen() {
       const checkpointData = {
         site,
         motivo: proximoPonto ? 'ronda_em_site' : motivo,
+        tipo: tipo,
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         timestamp: new Date().toISOString(),
@@ -1667,58 +1678,61 @@ export default function HomeScreen() {
   };
 
   // Função para encontrar múltiplos sites próximos com Geohash
-  const encontrarSitesProximosComGeohash = async (latitude: number, longitude: number, limite: number = 10): Promise<Site[]> => {
+  const encontrarSitesProximosComGeohash = async (
+    latitude: number,
+    longitude: number,
+    limite: number = 10
+  ): Promise<Site[]> => {
     try {
-      const center = [latitude, longitude];
+      const center: [number, number] = [latitude, longitude];
       const radiusInM = 10 * 1000;
       const bounds = geohashQueryBounds(center, radiusInM);
-
+      const sitesRef = collection(aprDb, 'sites');
       const promises = bounds.map((bound) => {
-        const mapaDeCalorRef = collection(otherDb, 'mapaDeCalor');
         const q = query(
-          mapaDeCalorRef,
-          where('geohash', '>=', bound[0]),
-          where('geohash', '<=', bound[1]),
-          where('status', '==', 'ativo')
+          sitesRef,
+          orderBy('geohash'),
+          startAt(bound[0]),
+          endAt(bound[1])
         );
         return getDocs(q);
       });
-
       const snapshots = await Promise.all(promises);
-
       const sitesProximos: Site[] = [];
-
+      const seen = new Set<string>();
       for (const snapshot of snapshots) {
-        for (const doc of snapshot.docs) {
-          const siteData = doc.data();
+        for (const docSnap of snapshot.docs) {
+          if (seen.has(docSnap.id)) continue;
+          seen.add(docSnap.id);
+          const siteData = docSnap.data();
+          const lat = String(siteData.Latitude);
+          const lng = String(siteData.Longitude);
+       
+          const situacao = siteData.Situacao || '';
+          if (!['ATIVO', 'ATIVO NÃO ADQUIRIDO'].includes(situacao)) continue;
 
-          if (siteData.latitude && siteData.longitude) {
-            const lat = siteData.latitude;
-            const lng = siteData.longitude;
-            const distanceInKm = distanceBetween([lat, lng], center);
+          const distanceInKm = distanceBetween([lat, lng], center);
 
-            if (distanceInKm <= 10) {
-              sitesProximos.push({
-                id: doc.id,
-                nome: siteData.nome || '',
-                sigla: siteData.sigla || '',
-                endereco: siteData.endereco || '',
-                latitude: lat,
-                longitude: lng,
-                raio: siteData.raio || 0,
-                uf: siteData.uf || '',
-                regional: siteData.regional || '',
-                status: siteData.status || '',
-                createdBy: siteData.createdBy || '',
-                idOriginalPerimetro: siteData.idOriginalPerimetro || '',
-                dataInicio: siteData.dataInicio || null,
-                dataFim: siteData.dataFim || null,
-                geohash: siteData.geohash || ''
-              });
-            }
+          if (distanceInKm <= 10) {
+            sitesProximos.push({
+              id: docSnap.id,
+              nome: siteData.Nome || '',
+              sigla: siteData.Sigla || '',
+              endereco: siteData.Endereco || '',
+              latitude: lat,
+              longitude: lng,
+              raio: siteData.raio || 0,
+              uf: siteData.Estado || '',
+              status: situacao,
+              createdBy: siteData.createdBy || siteData.created || '',
+              idOriginalPerimetro: siteData.idOriginalPerimetro || '',
+              geohash: siteData.geohash || ''
+            });
           }
         }
       }
+
+
 
       sitesProximos.sort((a, b) => {
         const distA = distanceBetween([a.latitude, a.longitude], center);
@@ -1726,58 +1740,15 @@ export default function HomeScreen() {
         return distA - distB;
       });
 
+
+
       return sitesProximos.slice(0, limite);
-
     } catch (error) {
-      console.error('Erro ao buscar múltiplos sites com Geohash:', error);
-
-      const mapaDeCalorRef = collection(otherDb, 'mapaDeCalor');
-      const q = query(mapaDeCalorRef, where('status', '==', 'ativo'));
-      const querySnapshot = await getDocs(q);
-
-      const sites: Site[] = [];
-
-      querySnapshot.forEach((doc) => {
-        const siteData = doc.data();
-        if (siteData.latitude && siteData.longitude) {
-          const distancia = calcularDistancia(
-            latitude,
-            longitude,
-            siteData.latitude,
-            siteData.longitude
-          );
-
-          if (distancia <= 10) {
-            sites.push({
-              id: doc.id,
-              nome: siteData.nome || '',
-              sigla: siteData.sigla || '',
-              endereco: siteData.endereco || '',
-              latitude: siteData.latitude,
-              longitude: siteData.longitude,
-              raio: siteData.raio || 0,
-              uf: siteData.uf || '',
-              regional: siteData.regional || '',
-              status: siteData.status || '',
-              createdBy: siteData.createdBy || '',
-              idOriginalPerimetro: siteData.idOriginalPerimetro || '',
-              dataInicio: siteData.dataInicio || null,
-              dataFim: siteData.dataFim || null,
-              geohash: siteData.geohash || ''
-            });
-          }
-        }
-      });
-
-      sites.sort((a, b) => {
-        const distA = calcularDistancia(latitude, longitude, a.latitude, a.longitude);
-        const distB = calcularDistancia(latitude, longitude, b.latitude, b.longitude);
-        return distA - distB;
-      });
-
-      return sites.slice(0, limite);
+      console.error('Erro ao buscar sites com Geohash:', error);
+      return [];
     }
   };
+
 
   return (
     <View style={styles.container}>
@@ -1908,6 +1879,7 @@ export default function HomeScreen() {
             visible={showKmModal !== null}
             type={showKmModal}
             kmValue={showKmModal === 'inicio' ? kmInicial : kmFinal}
+            kmInicial={kmInicial}
             onKmChange={showKmModal === 'inicio' ? setKmInicial : setKmFinal}
             placaValue={showKmModal === 'inicio' ? placaInicial : placaFinal}
             onPlacaChange={showKmModal === 'inicio' ? setPlacaInicial : setPlacaFinal}
@@ -1920,8 +1892,16 @@ export default function HomeScreen() {
               setProximoPonto(null);
               setModoRota(null);
             }}
-            onConfirm={showKmModal === 'inicio' ? confirmStartTracking : confirmStopTracking}
+
+            onConfirm={(tipo) =>
+              showKmModal === 'inicio'
+                ? confirmStartTracking()
+                : confirmStopTracking(tipo)
+            }
+
             uploading={uploading}
+            uid={uid}
+            buscarUltimoKmPorPlaca={buscarUltimoKmPorUsuarioEPlaca}
           />
         </Modal>
 
@@ -1958,11 +1938,10 @@ export default function HomeScreen() {
               setSiteSelecionadoDaRota(false);
               setShowCheckpointModal(false);
             }}
-            onConfirm={confirmCheckpoint}
+            onConfirm={(tipo) => confirmCheckpoint(tipo)}
             uploading={uploading}
             onAutoDetect={buscarSitesProximosManualmente}
             location={location}
-            modoRota={modoRota}
           />
         </Modal>
 
@@ -2000,7 +1979,7 @@ export default function HomeScreen() {
                         <Text style={styles.siteDistancia}>
                           📍 {distancia.toFixed(2)} km de distância
                         </Text>
-                        {site.regional && (
+                        {site.UF && (
                           <Text style={styles.siteRegional}>🏢 {site.regional}</Text>
                         )}
                       </View>
