@@ -224,7 +224,8 @@ const styles = StyleSheet.create({
       fontWeight: 'bold',
     },
     pontosList: {
-      maxHeight: 200,
+      maxHeight: 300,
+      marginTop:10,
     },
     pontoItem: {
       flexDirection: 'row',

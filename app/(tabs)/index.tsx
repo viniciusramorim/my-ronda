@@ -10,13 +10,13 @@ import {
   ActivityIndicator,
   Linking,
 } from "react-native";
-import {geohashQueryBounds, distanceBetween} from "geofire-common";
-import {Picker} from "@react-native-picker/picker";
+import { geohashQueryBounds, distanceBetween } from "geofire-common";
+import { Picker } from "@react-native-picker/picker";
 import * as Location from "expo-location";
 import * as ImagePicker from "expo-image-picker";
 import * as TaskManager from "expo-task-manager";
 import * as BackgroundFetch from "expo-background-fetch";
-import {useEffect, useState, useCallback, useRef} from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   doc,
   setDoc,
@@ -29,17 +29,18 @@ import {
   getDocs,
   limit,
 } from "firebase/firestore";
-import {ref, uploadBytes, getDownloadURL} from "firebase/storage";
-import {MaterialCommunityIcons} from "@expo/vector-icons";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import {otherDb, storage} from "@/services/firebaseConfig";
-import {useRonda} from "./_layout";
+import { otherDb, storage } from "@/services/firebaseConfig";
+import { useRonda } from "./_layout";
 import styles from "@/assets/styles/stylesIndex";
 import KmModal from "@/components/modals/KmModal";
 import PanicModal from "@/components/modals/PanicModal";
 import CheckpointModal from "@/components/modals/CheckpointModal";
 import TrocaVeiculoModal from "@/components/modals/TrocaVeiculoModal";
+
 
 const LOCATION_TASK_NAME = "background-location-task";
 const BACKGROUND_FETCH_TASK = "background-fetch-task";
@@ -69,6 +70,7 @@ interface PontoColeta {
   imageUrl?: string;
   latitude: number;
   longitude: number;
+  ativo: boolean;
 }
 
 interface Site {
@@ -123,7 +125,7 @@ const verificarLogDuplicado = async (
 };
 
 // Definição da tarefa de localização em background (ATUALIZADA)
-TaskManager.defineTask(LOCATION_TASK_NAME, async ({data, error}) => {
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) {
     if (error.code === "TASK_NOT_REGISTERED") {
       console.log(
@@ -136,7 +138,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({data, error}) => {
   }
 
   if (data) {
-    const {locations} = data as any;
+    const { locations } = data as any;
     const location = locations[0];
     if (location) {
       try {
@@ -237,7 +239,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 });
 
 export default function HomeScreen() {
-  const {isTracking, setIsTracking} = useRonda();
+  const { isTracking, setIsTracking } = useRonda();
   const [location, setLocation] = useState<any>(null);
   const [subscription, setSubscription] = useState<any>(null);
   const [rondaId, setRondaId] = useState<string | null>(null);
@@ -306,7 +308,7 @@ export default function HomeScreen() {
       }
 
       // Permissões de localização em foreground
-      const {status: foregroundStatus} =
+      const { status: foregroundStatus } =
         await Location.requestForegroundPermissionsAsync();
       if (foregroundStatus !== "granted") {
         Alert.alert(
@@ -318,14 +320,14 @@ export default function HomeScreen() {
 
       // Permissões de background no Android
       if (Platform.OS === "android") {
-        const {status: backgroundStatus} =
+        const { status: backgroundStatus } =
           await Location.requestBackgroundPermissionsAsync();
         if (backgroundStatus !== "granted") {
           Alert.alert(
             "Permissão necessária",
             "Para rastreamento contínuo, precisamos de acesso à sua localização em segundo plano.",
             [
-              {text: "Cancelar", style: "cancel"},
+              { text: "Cancelar", style: "cancel" },
               {
                 text: "Abrir Configurações",
                 onPress: () => Location.openSettings(),
@@ -369,7 +371,7 @@ export default function HomeScreen() {
             "Modo de Economia Ativo",
             "Para o rastreamento funcionar corretamente, desative as otimizações de bateria para este app nas configurações do dispositivo.",
             [
-              {text: "Cancelar", style: "cancel"},
+              { text: "Cancelar", style: "cancel" },
               {
                 text: "Abrir Configurações",
                 onPress: () => Location.openSettings(),
@@ -441,6 +443,7 @@ export default function HomeScreen() {
               descricao: ponto.descricao || "",
               ordem: ponto.ordem || index + 1,
               concluido: ponto.concluido || false,
+              ativo: ponto.concluido !== false,
               timestamp: ponto.timestamp || "",
               imageUrl: ponto.imageUrl || "",
               latitude: ponto.latitude || 0,
@@ -495,6 +498,30 @@ export default function HomeScreen() {
     }
   }, [uid]);
 
+  const buscarUltimoKmPorPlaca = async (uid: string, placa: string) => {
+    try {
+      const ref = collection(otherDb, "rondas");
+
+      const q = query(
+        ref,
+        where("uid", "==", uid),
+        where("placaFinal", "==", placa),
+        limit(1)
+      );
+
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) return null;
+
+      const data = snapshot.docs[0].data();
+
+      return data.kmFinal || null;
+    } catch (error) {
+      console.error("Erro ao buscar último KM:", error);
+      return null;
+    }
+  };
+
   // Carregar checkpoints da ronda
   const carregarCheckpoints = useCallback(async (rondaId: string) => {
     try {
@@ -547,7 +574,7 @@ export default function HomeScreen() {
           concluido: temCheckpoint,
           timestamp: temCheckpoint
             ? checkpointsCarregados.find((c) => c.site === siteFormatado)
-                ?.timestamp || ""
+              ?.timestamp || ""
             : "",
         };
       });
@@ -604,9 +631,9 @@ export default function HomeScreen() {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
@@ -747,14 +774,17 @@ export default function HomeScreen() {
                 "s atrás, distância:",
                 ultimaLocalizacaoSalva
                   ? calcularDistancia(
-                      loc.coords.latitude,
-                      loc.coords.longitude,
-                      ultimaLocalizacaoSalva.lat,
-                      ultimaLocalizacaoSalva.lng,
-                    ) * 1000
+                    loc.coords.latitude,
+                    loc.coords.longitude,
+                    ultimaLocalizacaoSalva.lat,
+                    ultimaLocalizacaoSalva.lng,
+                  ) * 1000
                   : 0,
                 "metros",
               );
+              
+
+
             } catch (err) {
               console.error("Erro ao atualizar localização:", err);
             }
@@ -1110,8 +1140,8 @@ export default function HomeScreen() {
 
   // Função para verificar se está próximo de um ponto
   const verificarProximidadeDoLocal = (
-    localizacaoAtual: {latitude: number; longitude: number} | null,
-    pontoAlvo: {latitude: number; longitude: number},
+    localizacaoAtual: { latitude: number; longitude: number } | null,
+    pontoAlvo: { latitude: number; longitude: number },
     distanciaMaximaKm: number = 0.1,
   ): boolean => {
     if (!localizacaoAtual) return false;
@@ -1164,7 +1194,7 @@ export default function HomeScreen() {
     try {
       const pontosAtualizados = rotaAtiva.pontos.map((ponto) =>
         ponto.id === proximoPonto.id
-          ? {...ponto, concluido: true, timestamp: new Date().toISOString()}
+          ? { ...ponto, concluido: true, ativo: false, timestamp: new Date().toISOString() }
           : ponto,
       );
 
@@ -1214,6 +1244,18 @@ export default function HomeScreen() {
       const novaRondaId = `ronda_${new Date().getTime()}`;
       const rondaRef = doc(otherDb, "rondas", novaRondaId);
       const userRef = doc(otherDb, "usuarios", uid);
+      
+ const local = await obterMunicipioAtual(
+      location.coords.latitude,
+      location.coords.longitude
+    );
+
+    let municipioBase = null;
+
+    if (local) {
+      municipioBase = normalizarTexto(`${local.municipio}-${local.uf}`);
+      console.log("📍 Município inicial:", municipioBase);
+    }
 
       const imageUrl = await uploadImage();
 
@@ -1227,11 +1269,15 @@ export default function HomeScreen() {
         timestamp: new Date().toISOString(),
         imagemInicial: imageUrl,
         modoRota: modoRota,
+       municipioBase,
+      municipiosPercorridos: municipioBase ? [municipioBase] : [],
+      saiuDoMunicipio: null,
         ...(rotaAtiva && {
           rotaPreDefinida: {
             id: rotaAtiva.id,
             nome: rotaAtiva.nome,
             pontosTotais: rotaAtiva.pontos.length,
+
           },
         }),
       };
@@ -1333,6 +1379,11 @@ export default function HomeScreen() {
           }),
           updateDoc(userRef, {
             status_ronda: "Parado",
+            ultimoKm: parseFloat(kmFinal),
+            ultimaPlaca: placaFinal,
+            ultimaAtualizacaoKm: new Date().toISOString(),
+
+
           }),
         ]);
 
@@ -1541,7 +1592,7 @@ export default function HomeScreen() {
         longitude: location.coords.longitude,
         timestamp: new Date().toISOString(),
         comentario: comment,
-        ...(imageUrl && {imageUrl}),
+        ...(imageUrl && { imageUrl }),
       };
 
       const checkpointsRef = collection(
@@ -1600,7 +1651,7 @@ export default function HomeScreen() {
         latitude: location.coords.latitude,
         longitude: location.coords.longitude,
         timestamp: new Date().toISOString(),
-        ...(imageUrl && {imageUrl}),
+        ...(imageUrl && { imageUrl }),
       };
 
       const checkpointsRef = collection(
@@ -1664,7 +1715,7 @@ export default function HomeScreen() {
           kmNovo: parseFloat(dados.kmNovo),
           placaNovo: dados.placaNovo,
         },
-        ...(imageUrl && {imageUrl}),
+        ...(imageUrl && { imageUrl }),
       };
 
       const checkpointsRef = collection(
@@ -2107,6 +2158,7 @@ export default function HomeScreen() {
             visible={showKmModal !== null}
             type={showKmModal}
             kmValue={showKmModal === "inicio" ? kmInicial : kmFinal}
+            kmInicial={kmInicial}
             onKmChange={showKmModal === "inicio" ? setKmInicial : setKmFinal}
             placaValue={showKmModal === "inicio" ? placaInicial : placaFinal}
             onPlacaChange={
@@ -2127,6 +2179,10 @@ export default function HomeScreen() {
                 : confirmStopTracking
             }
             uploading={uploading}
+
+            uid={uid}
+            buscarUltimoKmPorPlaca={buscarUltimoKmPorPlaca}
+
           />
         </Modal>
 
@@ -2178,7 +2234,7 @@ export default function HomeScreen() {
             uploading={uploading}
             onAutoDetect={buscarSitesProximosManualmente}
             location={location}
-            modoRota={modoRota}
+          //modoRota={modoRota}
           />
         </Modal>
 
@@ -2189,7 +2245,7 @@ export default function HomeScreen() {
           animationType="slide"
         >
           <View style={styles.modalContainer}>
-            <View style={[styles.modalContent, {maxHeight: "80%"}]}>
+            <View style={[styles.modalContent, { maxHeight: "80%" }]}>
               <Text style={styles.modalTitle}>Selecione o Site</Text>
               <Text style={styles.modalSubtitle}>
                 {sitesProximosEncontrados.length} site(s) encontrado(s) próximos
@@ -2238,7 +2294,7 @@ export default function HomeScreen() {
               </ScrollView>
 
               <TouchableOpacity
-                style={[styles.button, styles.buttonCancel, {marginTop: 10}]}
+                style={[styles.button, styles.buttonCancel, { marginTop: 10 }]}
                 onPress={() => {
                   setMostrarSelecaoSites(false);
                   setShowCheckpointModal(true);
@@ -2250,7 +2306,7 @@ export default function HomeScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.button, styles.buttonCancel, {marginTop: 5}]}
+                style={[styles.button, styles.buttonCancel, { marginTop: 5 }]}
                 onPress={() => {
                   setMostrarSelecaoSites(false);
                   setMostrandoAlertaDetecao(false);
@@ -2269,22 +2325,22 @@ export default function HomeScreen() {
           animationType="fade"
         >
           <View style={styles.modalContainer}>
-            <View style={[styles.modalContent, {padding: 30}]}>
+            <View style={[styles.modalContent, { padding: 30 }]}>
               <ActivityIndicator size="large" color="#007BFF" />
               <Text
                 style={[
                   styles.modalTitle,
-                  {marginTop: 20, textAlign: "center"},
+                  { marginTop: 20, textAlign: "center" },
                 ]}
               >
                 Detectando Site
               </Text>
-              <Text style={[styles.modalSubtitle, {textAlign: "center"}]}>
+              <Text style={[styles.modalSubtitle, { textAlign: "center" }]}>
                 Procurando sites próximos na sua localização...
               </Text>
 
               <TouchableOpacity
-                style={[styles.button, styles.buttonCancel, {marginTop: 20}]}
+                style={[styles.button, styles.buttonCancel, { marginTop: 20 }]}
                 onPress={() => setMostrandoAlertaDetecao(false)}
               >
                 <Text style={styles.buttonText}>Cancelar Busca</Text>
@@ -2445,36 +2501,44 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
             )}
+            <ScrollView
+              style={styles.pontosList}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled
+              contentContainerStyle={{ paddingBottom: 20 }}
+            >
+              {
+                rotaAtiva.pontos
 
-            <ScrollView style={styles.pontosList}>
-              {rotaAtiva.pontos.map((ponto) => (
-                <TouchableOpacity
-                  key={ponto.id}
-                  style={[
-                    styles.pontoItem,
-                    ponto.concluido && styles.pontoConcluido,
-                  ]}
-                  onPress={() => selecionarSiteDaRota(ponto)}
-                  disabled={ponto.concluido}
-                >
-                  <MaterialCommunityIcons
-                    name={ponto.concluido ? "check-circle" : "map-marker"}
-                    size={20}
-                    color={ponto.concluido ? "#28a745" : "#007BFF"}
-                  />
-                  <Text style={styles.pontoText}>
-                    {ponto.sigla}-{ponto.uf} - {ponto.descricao}
-                  </Text>
-                  {ponto.timestamp && (
-                    <Text style={styles.pontoTime}>
-                      {new Date(ponto.timestamp).toLocaleTimeString()}
-                    </Text>
-                  )}
-                  {!ponto.concluido && (
-                    <Text style={styles.pontoText}>Toque para registrar</Text>
-                  )}
-                </TouchableOpacity>
-              ))}
+                  .map((ponto) => (
+
+                    <TouchableOpacity
+                      key={ponto.id}
+                      style={[
+                        styles.pontoItem,
+                        ponto.concluido && styles.pontoConcluido,
+                      ]}
+                      onPress={() => selecionarSiteDaRota(ponto)}
+                      disabled={ponto.concluido}
+                    >
+                      <MaterialCommunityIcons
+                        name={ponto.concluido ? "check-circle" : "map-marker"}
+                        size={20}
+                        color={ponto.concluido ? "#28a745" : "#007BFF"}
+                      />
+                      <Text style={styles.pontoText}>
+                        {ponto.sigla}-{ponto.uf} - {ponto.descricao}
+                      </Text>
+                      {ponto.timestamp && (
+                        <Text style={styles.pontoTime}>
+                          {new Date(ponto.timestamp).toLocaleTimeString()}
+                        </Text>
+                      )}
+                      {!ponto.concluido && (
+                        <Text style={styles.pontoText}>Toque para registrar</Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
             </ScrollView>
           </View>
         )}

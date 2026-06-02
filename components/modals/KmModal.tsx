@@ -118,17 +118,33 @@ const KmModal: React.FC<KmModalProps> = ({
     if (!value) return "";
     return value.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   };
-  const normalizarKm = (valor: string): number => {
-    if (!valor) return NaN;
+ 
+  
+const normalizarKm = (valor: string): number => {
+  if (!valor) return NaN;
 
-    const tratado = valor.replace(",", ".");
-    const numero = parseFloat(tratado);
+  const somenteNumeros = valor.replace(/\D/g, "");
 
-    if (isNaN(numero)) return NaN;
+  const numero = parseInt(somenteNumeros, 10);
 
-    return Math.floor(numero); // sempre inteiro
+  return isNaN(numero) ? NaN : numero;
+};
+
+  const validarKM = () => {
+    const km = parseFloat(kmValue);
+
+    if (isNaN(km)) {
+      Alert.alert("Erro", "Informe um KM válido.");
+      return false;
+    }
+
+    if (km < 0) {
+      Alert.alert("Erro", "KM não pode ser negativo.");
+      return false;
+    }
+
+    return true;
   };
-
   const handleConfirmPress = async () => {
     if (!kmValue.trim()) {
       Alert.alert('Erro', 'O campo KM é obrigatório.');
@@ -160,8 +176,24 @@ const KmModal: React.FC<KmModalProps> = ({
 
     // VERIFICAÇÃO DE KM FINAL
     if (type === 'fim') {
-     
-if (!isNaN(kmIni) && kmAtual <= kmIni) {
+
+  // ✅ GARANTE QUE KM INICIAL EXISTE
+  if (!kmInicial) {
+    Alert.alert("Erro", "KM inicial não encontrado.");
+    return;
+  }
+
+  if (isNaN(kmIni)) {
+    Alert.alert("Erro", "KM inicial inválido.");
+    return;
+  }
+
+  if (kmAtual < 0) {
+    Alert.alert('Erro', 'KM final não pode ser negativo.');
+    return;
+  }
+
+  if (kmAtual <= kmIni) {
     Alert.alert(
       'Erro de quilometragem',
       `O KM final (${kmAtual}) deve ser maior que o KM inicial (${kmIni}).`
@@ -171,32 +203,33 @@ if (!isNaN(kmIni) && kmAtual <= kmIni) {
 
   const diferenca = kmAtual - kmIni;
 
-      if (diferenca >= 1500) {
-        Alert.alert(
-          'Distância não permitida',
-          `Foram percorridos${diferenca.toFixed(0)} km.\nO limite máximo é 1.500 km.`
-        );
-        return;
-      }
+  // ✅ DEBUG (deixa temporariamente)
+  console.log("KM INICIAL:", kmIni);
+  console.log("KM FINAL:", kmAtual);
+  console.log("DIFERENÇA:", diferenca);
 
-      if (diferenca > 1000) {
-        Alert.alert(
-          'Atenção',
-          `Foram percorridos ${diferenca.toFixed(0)} km.\nDeseja confirmar mesmo assim?`,
-          [
-            { text: 'Cancelar', style: 'cancel' },
-            {
-              text: 'Confirmar',
-              onPress: () => onConfirm(tipoRonda),
+  // ✅ BLOQUEIO
+  if (!isNaN(diferenca) && diferenca >= 1500) {
+    Alert.alert(
+      'Bloqueado',
+      `Limite máximo de 1500 km ultrapassado (${diferenca}).`
+    );
+    return;
+  }
 
-            }
-          ]
-        );
-        return;
-      }
-    }
-
-
+  // ✅ ALERTA
+  if (!isNaN(diferenca) && diferenca > 1000) {
+    Alert.alert(
+      'Atenção',
+      `Percorrido ${diferenca} km. Deseja continuar?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Confirmar', onPress: () => onConfirm(tipoRonda) }
+      ]
+    );
+    return;
+  }
+}
     onConfirm(tipoRonda);
   };
 
