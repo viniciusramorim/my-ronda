@@ -1954,16 +1954,6 @@ export default function HomeScreen() {
       const radiusInM = 10 * 1000;
       const bounds = geohashQueryBounds(center, radiusInM);
       const sitesRef = collection(aprDb, "sites");
-      const promises = bounds.map((bound) => {
-        const q = query(
-          sitesRef,
-          orderBy("geohash"),
-          startAt(bound[0]),
-          endAt(bound[1]),
-        );
-        return getDocs(q);
-      });
-      const snapshots = await Promise.all(promises);
       const sitesProximos: Site[] = [];
       const seen = new Set<string>();
 
@@ -1978,7 +1968,9 @@ export default function HomeScreen() {
 
         if (lat === null || lng === null) return;
 
-        const situacao = String(siteData.Situacao ?? "").trim();
+        const situacao = String(
+          siteData.Situacao ?? siteData.situacao ?? siteData.status ?? "",
+        ).trim();
         const situacaoNormalizada = normalizarTexto(situacao);
         if (!SITUACOES_SITE_DETECTAVEL.has(situacaoNormalizada)) return;
 
@@ -2005,8 +1997,26 @@ export default function HomeScreen() {
         }
       };
 
-      for (const snapshot of snapshots) {
-        snapshot.docs.forEach(adicionarSiteSeProximo);
+      try {
+        const promises = bounds.map((bound) => {
+          const q = query(
+            sitesRef,
+            orderBy("geohash"),
+            startAt(bound[0]),
+            endAt(bound[1]),
+          );
+          return getDocs(q);
+        });
+        const snapshots = await Promise.all(promises);
+
+        for (const snapshot of snapshots) {
+          snapshot.docs.forEach(adicionarSiteSeProximo);
+        }
+      } catch (geohashError) {
+        console.warn(
+          "Busca por geohash falhou; tentando busca direta por distância.",
+          geohashError,
+        );
       }
 
       if (sitesProximos.length === 0) {
