@@ -46,7 +46,7 @@ export default function TrocaVeiculoModal({
       return;
     }
 
-    if (parseFloat(kmNovo) <= parseFloat(kmAtual)) {
+    if (Number(kmNovo) <= Number(kmAtual)) {
       Alert.alert('Erro', 'A quilometragem do novo veículo deve ser maior que a do veículo atual.');
       return;
     }

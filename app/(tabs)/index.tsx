@@ -505,8 +505,7 @@ export default function HomeScreen() {
       const q = query(
         ref,
         where("uid", "==", uid),
-        where("placaFinal", "==", placa),
-        limit(1)
+        where("placaFinal", "==", placa)
       );
 
       const snapshot = await getDocs(q);
@@ -782,7 +781,7 @@ export default function HomeScreen() {
                   : 0,
                 "metros",
               );
-              
+
 
 
             } catch (err) {
@@ -1225,8 +1224,55 @@ export default function HomeScreen() {
     }
   };
 
+  const normalizarPlaca = (placa: string) =>
+    placa.replace(/[^A-Z0-9]/gi, "").toUpperCase();
+
+  const validarKmComBaseNoUsuario = async (
+    uid: string,
+    placaDigitada: string,
+    kmDigitado: number
+  ): Promise<boolean> => {
+    try {
+      const userRef = doc(otherDb, "usuarios", uid);
+      const userSnap = await getDoc(userRef);
+
+      if (!userSnap.exists()) return true;
+
+      const userData = userSnap.data();
+
+      const ultimaPlaca = userData.ultimaPlaca;
+      const ultimoKm = Number(userData.ultimoKm);
+
+      const ultimaPlacaNormalizada = normalizarPlaca(ultimaPlaca || "");
+      const placaDigitadaNormalizada = normalizarPlaca(placaDigitada);
+
+      // MESMA PLACA → VALIDAR KM
+      if (
+        ultimaPlacaNormalizada &&
+        ultimaPlacaNormalizada === placaDigitadaNormalizada &&
+        !isNaN(ultimoKm)
+      ) {
+        if (kmDigitado < ultimoKm) {
+          Alert.alert(
+            "Erro de Quilometragem",
+            `KM (${kmDigitado}) menor que o último registrado (${ultimoKm}) para a placa ${ultimaPlaca}`
+          );
+          return false;
+        }
+      }
+
+      // PLACA DIFERENTE → libera
+
+      return true;
+    } catch (error) {
+      console.error("Erro ao validar KM do usuário:", error);
+      return true;
+    }
+  };
+
   // Confirmar início da ronda
   const confirmStartTracking = async () => {
+
     if (!kmInicial || !placaInicial) {
       Alert.alert(
         "Erro",
@@ -1241,37 +1287,49 @@ export default function HomeScreen() {
     }
 
     try {
+
+      const kmInicialNumero = Number(kmInicial);
+
+      const continuar = await validarKmComBaseNoUsuario(
+        uid,
+        placaInicial,
+        kmInicialNumero
+      );
+
+      if (!continuar) return;
+
       const novaRondaId = `ronda_${new Date().getTime()}`;
       const rondaRef = doc(otherDb, "rondas", novaRondaId);
       const userRef = doc(otherDb, "usuarios", uid);
-      
- const local = await obterMunicipioAtual(
-      location.coords.latitude,
-      location.coords.longitude
-    );
 
-    let municipioBase = null;
 
-    if (local) {
-      municipioBase = normalizarTexto(`${local.municipio}-${local.uf}`);
-      console.log("📍 Município inicial:", municipioBase);
-    }
+      // const local = await obterMunicipioAtual(
+      //location.coords.latitude,
+      // location.coords.longitude
+      // );
+
+      //let municipioBase = null;
+
+      //if (local) {
+      //municipioBase = normalizarTexto(`${local.municipio}-${local.uf}`);
+      //console.log("📍 Município inicial:", municipioBase);
+      // }
 
       const imageUrl = await uploadImage();
 
       const rondaData = {
         nomeRonda: `Ronda_${new Date().toLocaleString()}`,
         inicio: new Date().toISOString(),
-        kmInicial: parseFloat(kmInicial),
+        kmInicial: kmInicialNumero,
         placaInicial,
         ultimaLocalizacao: null,
         uid: uid,
         timestamp: new Date().toISOString(),
         imagemInicial: imageUrl,
         modoRota: modoRota,
-       municipioBase,
-      municipiosPercorridos: municipioBase ? [municipioBase] : [],
-      saiuDoMunicipio: null,
+        //municipioBase,
+        //municipiosPercorridos: municipioBase ? [municipioBase] : [],
+        //saiuDoMunicipio: null,
         ...(rotaAtiva && {
           rotaPreDefinida: {
             id: rotaAtiva.id,
@@ -1281,6 +1339,7 @@ export default function HomeScreen() {
           },
         }),
       };
+
 
       await setDoc(rondaRef, rondaData);
 
@@ -1332,7 +1391,7 @@ export default function HomeScreen() {
       return;
     }
 
-    if (parseFloat(kmFinal) <= parseFloat(kmInicial)) {
+    if (Number(kmFinal) <= Number(kmInicial)) {
       Alert.alert(
         "Erro",
         "A quilometragem final não pode ser menor que a quilometragem inicial.",
@@ -1349,12 +1408,12 @@ export default function HomeScreen() {
       setIsTracking(false);
 
       await gerenciarTarefaBackground("parar");
-
-      if (rondaId && uid) {
+      const userUid = await AsyncStorage.getItem("userUid");
+      if (rondaId && userUid) {
         const rondaRef = doc(otherDb, "rondas", rondaId);
-        const userRef = doc(otherDb, "usuarios", uid);
+        const userRef = doc(otherDb, "usuarios", userUid);
 
-        const distanciaPercorrida = parseFloat(kmFinal) - parseFloat(kmInicial);
+        const distanciaPercorrida = Number(kmFinal) - Number(kmInicial);
         const imageUrl = await uploadImage();
 
         const pontosConcluidos = rotaAtiva
@@ -1364,7 +1423,7 @@ export default function HomeScreen() {
         await Promise.all([
           updateDoc(rondaRef, {
             fim: new Date().toISOString(),
-            kmFinal: parseFloat(kmFinal),
+            kmFinal: Number(kmFinal),
             placaFinal,
             distanciaPercorrida,
             imagemFinal: imageUrl,
@@ -1379,7 +1438,7 @@ export default function HomeScreen() {
           }),
           updateDoc(userRef, {
             status_ronda: "Parado",
-            ultimoKm: parseFloat(kmFinal),
+            ultimoKm: Number(kmFinal) || 0,
             ultimaPlaca: placaFinal,
             ultimaAtualizacaoKm: new Date().toISOString(),
 
@@ -1390,7 +1449,7 @@ export default function HomeScreen() {
         setRondaDetails((prev: any) => ({
           ...prev,
           fim: new Date().toISOString(),
-          kmFinal: parseFloat(kmFinal),
+          kmFinal: Number(kmFinal),
           placaFinal,
           distanciaPercorrida,
           imagemFinal: imageUrl,
@@ -1710,9 +1769,9 @@ export default function HomeScreen() {
         longitude: location?.coords.longitude || 0,
         timestamp: new Date().toISOString(),
         detalhes: {
-          kmAnterior: parseFloat(dados.kmAtual),
+          kmAnterior: Number(dados.kmAtual),
           placaAnterior: dados.placaAtual,
-          kmNovo: parseFloat(dados.kmNovo),
+          kmNovo: Number(dados.kmNovo),
           placaNovo: dados.placaNovo,
         },
         ...(imageUrl && { imageUrl }),
@@ -1730,25 +1789,25 @@ export default function HomeScreen() {
       await updateDoc(rondaRef, {
         ultimaTrocaVeiculo: {
           timestamp: new Date().toISOString(),
-          kmAnterior: parseFloat(dados.kmAtual),
+          kmAnterior: Number(dados.kmAtual),
           placaAnterior: dados.placaAtual,
-          kmNovo: parseFloat(dados.kmNovo),
+          kmNovo: Number(dados.kmNovo),
           placaNovo: dados.placaNovo,
           imagem: imageUrl,
         },
         placaAtual: dados.placaNovo,
-        kmAtual: parseFloat(dados.kmNovo),
+        kmAtual: Number(dados.kmNovo),
       });
 
       setRondaDetails((prev: any) => ({
         ...prev,
         placaAtual: dados.placaNovo,
-        kmAtual: parseFloat(dados.kmNovo),
+        kmAtual: Number(dados.kmNovo),
         ultimaTrocaVeiculo: {
           timestamp: new Date().toISOString(),
-          kmAnterior: parseFloat(dados.kmAtual),
+          kmAnterior: Number(dados.kmAtual),
           placaAnterior: dados.placaAtual,
-          kmNovo: parseFloat(dados.kmNovo),
+          kmNovo: Number(dados.kmNovo),
           placaNovo: dados.placaNovo,
           imagem: imageUrl,
         },
@@ -2246,13 +2305,22 @@ export default function HomeScreen() {
         >
           <View style={styles.modalContainer}>
             <View style={[styles.modalContent, { maxHeight: "80%" }]}>
+
               <Text style={styles.modalTitle}>Selecione o Site</Text>
               <Text style={styles.modalSubtitle}>
                 {sitesProximosEncontrados.length} site(s) encontrado(s) próximos
                 a você
               </Text>
 
-              <ScrollView style={styles.sitesList}>
+              <ScrollView
+                style={{ maxHeight: 400 }}
+                contentContainerStyle={{ paddingBottom: 20 }}
+                showsVerticalScrollIndicator={true}
+
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+
+              >
                 {sitesProximosEncontrados.map((site, index) => {
                   const distancia = distanceBetween(
                     [site.latitude, site.longitude],
@@ -2501,12 +2569,21 @@ export default function HomeScreen() {
                 </TouchableOpacity>
               </View>
             )}
+
             <ScrollView
-              style={styles.pontosList}
+              style={[
+                styles.pontosList,
+                {
+                  height: 300,
+                  maxHeight: 300,
+                }
+              ]}
               showsVerticalScrollIndicator={true}
+              persistentScrollbar={true}
               nestedScrollEnabled
               contentContainerStyle={{ paddingBottom: 20 }}
             >
+
               {
                 rotaAtiva.pontos
 

@@ -64,10 +64,12 @@ const KmModal: React.FC<KmModalProps> = ({
     onPlacaChange(cleaned);
   };
 
-  const handleKmChange = (text: string) => {
-    const cleaned = text.replace(/[^0-9.,]/g, ""); // remove tudo que não for número
-    onKmChange(cleaned);
-  };
+  
+const handleKmChange = (text: string) => {
+  const cleaned = text.replace(/\D/g, "");
+  onKmChange(cleaned);
+};
+
 
   // Função para aplicar a máscara do KM (100.000)
   {/*const handleKmChange = (text: string) => {
@@ -125,26 +127,12 @@ const normalizarKm = (valor: string): number => {
 
   const somenteNumeros = valor.replace(/\D/g, "");
 
-  const numero = parseInt(somenteNumeros, 10);
+  const numero = Number(somenteNumeros);
 
   return isNaN(numero) ? NaN : numero;
 };
 
-  const validarKM = () => {
-    const km = parseFloat(kmValue);
 
-    if (isNaN(km)) {
-      Alert.alert("Erro", "Informe um KM válido.");
-      return false;
-    }
-
-    if (km < 0) {
-      Alert.alert("Erro", "KM não pode ser negativo.");
-      return false;
-    }
-
-    return true;
-  };
   const handleConfirmPress = async () => {
     if (!kmValue.trim()) {
       Alert.alert('Erro', 'O campo KM é obrigatório.');
@@ -203,12 +191,12 @@ const normalizarKm = (valor: string): number => {
 
   const diferenca = kmAtual - kmIni;
 
-  // ✅ DEBUG (deixa temporariamente)
+  //  DEBUG 
   console.log("KM INICIAL:", kmIni);
   console.log("KM FINAL:", kmAtual);
   console.log("DIFERENÇA:", diferenca);
 
-  // ✅ BLOQUEIO
+  //  BLOQUEIO
   if (!isNaN(diferenca) && diferenca >= 1500) {
     Alert.alert(
       'Bloqueado',
@@ -217,7 +205,7 @@ const normalizarKm = (valor: string): number => {
     return;
   }
 
-  // ✅ ALERTA
+  // ALERTA
   if (!isNaN(diferenca) && diferenca > 1000) {
     Alert.alert(
       'Atenção',
@@ -248,7 +236,7 @@ const normalizarKm = (valor: string): number => {
           placeholder={`Digite o KM ${type === 'inicio' ? 'inicial' : 'final'} (ex: 100.000)`}
           placeholderTextColor="#999"
           keyboardType="numeric"
-          value={formatKmDisplay(kmValue)}
+          value={kmValue}
           onChangeText={handleKmChange}
           editable={!uploading}
         />

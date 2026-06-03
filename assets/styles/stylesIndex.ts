@@ -226,6 +226,7 @@ const styles = StyleSheet.create({
     pontosList: {
       maxHeight: 300,
       marginTop:10,
+     
     },
     pontoItem: {
       flexDirection: 'row',
