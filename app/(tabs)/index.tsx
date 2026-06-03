@@ -2019,6 +2019,27 @@ export default function HomeScreen() {
         );
       }
 
+      try {
+        const situacoesSiteDetectavelQuery = [
+          "ATIVO",
+          "ATIVO NÃO ADQUIRIDO",
+          "ATIVO NAO ADQUIRIDO",
+        ];
+        const fallbackPromises = situacoesSiteDetectavelQuery.map(
+          (situacao) =>
+            getDocs(query(sitesRef, where("Situacao", "==", situacao))),
+        );
+        const fallbackSnapshots = await Promise.all(fallbackPromises);
+        for (const snapshot of fallbackSnapshots) {
+          snapshot.docs.forEach(adicionarSiteSeProximo);
+        }
+      } catch (situacaoError) {
+        console.warn(
+          "Busca por situação falhou; tentando varredura completa.",
+          situacaoError,
+        );
+      }
+
       if (sitesProximos.length === 0) {
         seen.clear();
         const fallbackSnapshot = await getDocs(sitesRef);
