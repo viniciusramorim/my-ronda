@@ -41,7 +41,6 @@ import PanicModal from "@/components/modals/PanicModal";
 import CheckpointModal from "@/components/modals/CheckpointModal";
 import TrocaVeiculoModal from "@/components/modals/TrocaVeiculoModal";
 
-
 const LOCATION_TASK_NAME = "background-location-task";
 const BACKGROUND_FETCH_TASK = "background-fetch-task";
 
@@ -505,7 +504,7 @@ export default function HomeScreen() {
       const q = query(
         ref,
         where("uid", "==", uid),
-        where("placaFinal", "==", placa)
+        where("placaFinal", "==", placa),
       );
 
       const snapshot = await getDocs(q);
@@ -573,7 +572,7 @@ export default function HomeScreen() {
           concluido: temCheckpoint,
           timestamp: temCheckpoint
             ? checkpointsCarregados.find((c) => c.site === siteFormatado)
-              ?.timestamp || ""
+                ?.timestamp || ""
             : "",
         };
       });
@@ -630,9 +629,9 @@ export default function HomeScreen() {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
@@ -773,17 +772,14 @@ export default function HomeScreen() {
                 "s atrás, distância:",
                 ultimaLocalizacaoSalva
                   ? calcularDistancia(
-                    loc.coords.latitude,
-                    loc.coords.longitude,
-                    ultimaLocalizacaoSalva.lat,
-                    ultimaLocalizacaoSalva.lng,
-                  ) * 1000
+                      loc.coords.latitude,
+                      loc.coords.longitude,
+                      ultimaLocalizacaoSalva.lat,
+                      ultimaLocalizacaoSalva.lng,
+                    ) * 1000
                   : 0,
                 "metros",
               );
-
-
-
             } catch (err) {
               console.error("Erro ao atualizar localização:", err);
             }
@@ -1193,7 +1189,12 @@ export default function HomeScreen() {
     try {
       const pontosAtualizados = rotaAtiva.pontos.map((ponto) =>
         ponto.id === proximoPonto.id
-          ? { ...ponto, concluido: true, ativo: false, timestamp: new Date().toISOString() }
+          ? {
+              ...ponto,
+              concluido: true,
+              ativo: false,
+              timestamp: new Date().toISOString(),
+            }
           : ponto,
       );
 
@@ -1230,7 +1231,7 @@ export default function HomeScreen() {
   const validarKmComBaseNoUsuario = async (
     uid: string,
     placaDigitada: string,
-    kmDigitado: number
+    kmDigitado: number,
   ): Promise<boolean> => {
     try {
       const userRef = doc(otherDb, "usuarios", uid);
@@ -1255,7 +1256,7 @@ export default function HomeScreen() {
         if (kmDigitado < ultimoKm) {
           Alert.alert(
             "Erro de Quilometragem",
-            `KM (${kmDigitado}) menor que o último registrado (${ultimoKm}) para a placa ${ultimaPlaca}`
+            `KM (${kmDigitado}) menor que o último registrado (${ultimoKm}) para a placa ${ultimaPlaca}`,
           );
           return false;
         }
@@ -1272,7 +1273,6 @@ export default function HomeScreen() {
 
   // Confirmar início da ronda
   const confirmStartTracking = async () => {
-
     if (!kmInicial || !placaInicial) {
       Alert.alert(
         "Erro",
@@ -1287,13 +1287,12 @@ export default function HomeScreen() {
     }
 
     try {
-
       const kmInicialNumero = Number(kmInicial);
 
       const continuar = await validarKmComBaseNoUsuario(
         uid,
         placaInicial,
-        kmInicialNumero
+        kmInicialNumero,
       );
 
       if (!continuar) return;
@@ -1301,7 +1300,6 @@ export default function HomeScreen() {
       const novaRondaId = `ronda_${new Date().getTime()}`;
       const rondaRef = doc(otherDb, "rondas", novaRondaId);
       const userRef = doc(otherDb, "usuarios", uid);
-
 
       // const local = await obterMunicipioAtual(
       //location.coords.latitude,
@@ -1335,11 +1333,9 @@ export default function HomeScreen() {
             id: rotaAtiva.id,
             nome: rotaAtiva.nome,
             pontosTotais: rotaAtiva.pontos.length,
-
           },
         }),
       };
-
 
       await setDoc(rondaRef, rondaData);
 
@@ -1441,8 +1437,6 @@ export default function HomeScreen() {
             ultimoKm: Number(kmFinal) || 0,
             ultimaPlaca: placaFinal,
             ultimaAtualizacaoKm: new Date().toISOString(),
-
-
           }),
         ]);
 
@@ -1933,53 +1927,50 @@ export default function HomeScreen() {
     limite: number = 10,
   ): Promise<Site[]> => {
     try {
-      const center = [latitude, longitude];
+      const center: [number, number] = [latitude, longitude];
       const radiusInM = 10 * 1000;
       const bounds = geohashQueryBounds(center, radiusInM);
-
+      const sitesRef = collection(aprDb, "sites");
       const promises = bounds.map((bound) => {
-        const mapaDeCalorRef = collection(otherDb, "mapaDeCalor");
         const q = query(
-          mapaDeCalorRef,
-          where("geohash", ">=", bound[0]),
-          where("geohash", "<=", bound[1]),
-          where("status", "==", "ativo"),
+          sitesRef,
+          orderBy("geohash"),
+          startAt(bound[0]),
+          endAt(bound[1]),
         );
         return getDocs(q);
       });
-
       const snapshots = await Promise.all(promises);
-
       const sitesProximos: Site[] = [];
-
+      const seen = new Set<string>();
       for (const snapshot of snapshots) {
-        for (const doc of snapshot.docs) {
-          const siteData = doc.data();
+        for (const docSnap of snapshot.docs) {
+          if (seen.has(docSnap.id)) continue;
+          seen.add(docSnap.id);
+          const siteData = docSnap.data();
+          const lat = String(siteData.Latitude);
+          const lng = String(siteData.Longitude);
 
-          if (siteData.latitude && siteData.longitude) {
-            const lat = siteData.latitude;
-            const lng = siteData.longitude;
-            const distanceInKm = distanceBetween([lat, lng], center);
+          const situacao = siteData.Situacao || "";
+          if (!["ATIVO", "ATIVO NÃO ADQUIRIDO"].includes(situacao)) continue;
 
-            if (distanceInKm <= 10) {
-              sitesProximos.push({
-                id: doc.id,
-                nome: siteData.nome || "",
-                sigla: siteData.sigla || "",
-                endereco: siteData.endereco || "",
-                latitude: lat,
-                longitude: lng,
-                raio: siteData.raio || 0,
-                uf: siteData.uf || "",
-                regional: siteData.regional || "",
-                status: siteData.status || "",
-                createdBy: siteData.createdBy || "",
-                idOriginalPerimetro: siteData.idOriginalPerimetro || "",
-                dataInicio: siteData.dataInicio || null,
-                dataFim: siteData.dataFim || null,
-                geohash: siteData.geohash || "",
-              });
-            }
+          const distanceInKm = distanceBetween([lat, lng], center);
+
+          if (distanceInKm <= 10) {
+            sitesProximos.push({
+              id: docSnap.id,
+              nome: siteData.Nome || "",
+              sigla: siteData.Sigla || "",
+              endereco: siteData.Endereco || "",
+              latitude: lat,
+              longitude: lng,
+              raio: siteData.raio || 0,
+              uf: siteData.Estado || "",
+              status: situacao,
+              createdBy: siteData.createdBy || siteData.created || "",
+              idOriginalPerimetro: siteData.idOriginalPerimetro || "",
+              geohash: siteData.geohash || "",
+            });
           }
         }
       }
@@ -1992,63 +1983,8 @@ export default function HomeScreen() {
 
       return sitesProximos.slice(0, limite);
     } catch (error) {
-      console.error("Erro ao buscar múltiplos sites com Geohash:", error);
-
-      const mapaDeCalorRef = collection(otherDb, "mapaDeCalor");
-      const q = query(mapaDeCalorRef, where("status", "==", "ativo"));
-      const querySnapshot = await getDocs(q);
-
-      const sites: Site[] = [];
-
-      querySnapshot.forEach((doc) => {
-        const siteData = doc.data();
-        if (siteData.latitude && siteData.longitude) {
-          const distancia = calcularDistancia(
-            latitude,
-            longitude,
-            siteData.latitude,
-            siteData.longitude,
-          );
-
-          if (distancia <= 10) {
-            sites.push({
-              id: doc.id,
-              nome: siteData.nome || "",
-              sigla: siteData.sigla || "",
-              endereco: siteData.endereco || "",
-              latitude: siteData.latitude,
-              longitude: siteData.longitude,
-              raio: siteData.raio || 0,
-              uf: siteData.uf || "",
-              regional: siteData.regional || "",
-              status: siteData.status || "",
-              createdBy: siteData.createdBy || "",
-              idOriginalPerimetro: siteData.idOriginalPerimetro || "",
-              dataInicio: siteData.dataInicio || null,
-              dataFim: siteData.dataFim || null,
-              geohash: siteData.geohash || "",
-            });
-          }
-        }
-      });
-
-      sites.sort((a, b) => {
-        const distA = calcularDistancia(
-          latitude,
-          longitude,
-          a.latitude,
-          a.longitude,
-        );
-        const distB = calcularDistancia(
-          latitude,
-          longitude,
-          b.latitude,
-          b.longitude,
-        );
-        return distA - distB;
-      });
-
-      return sites.slice(0, limite);
+      console.error("Erro ao buscar sites com Geohash:", error);
+      return [];
     }
   };
 
@@ -2238,10 +2174,8 @@ export default function HomeScreen() {
                 : confirmStopTracking
             }
             uploading={uploading}
-
             uid={uid}
             buscarUltimoKmPorPlaca={buscarUltimoKmPorPlaca}
-
           />
         </Modal>
 
@@ -2293,7 +2227,7 @@ export default function HomeScreen() {
             uploading={uploading}
             onAutoDetect={buscarSitesProximosManualmente}
             location={location}
-          //modoRota={modoRota}
+            //modoRota={modoRota}
           />
         </Modal>
 
@@ -2305,7 +2239,6 @@ export default function HomeScreen() {
         >
           <View style={styles.modalContainer}>
             <View style={[styles.modalContent, { maxHeight: "80%" }]}>
-
               <Text style={styles.modalTitle}>Selecione o Site</Text>
               <Text style={styles.modalSubtitle}>
                 {sitesProximosEncontrados.length} site(s) encontrado(s) próximos
@@ -2316,10 +2249,8 @@ export default function HomeScreen() {
                 style={{ maxHeight: 400 }}
                 contentContainerStyle={{ paddingBottom: 20 }}
                 showsVerticalScrollIndicator={true}
-
                 nestedScrollEnabled
                 keyboardShouldPersistTaps="handled"
-
               >
                 {sitesProximosEncontrados.map((site, index) => {
                   const distancia = distanceBetween(
@@ -2576,46 +2507,41 @@ export default function HomeScreen() {
                 {
                   height: 300,
                   maxHeight: 300,
-                }
+                },
               ]}
               showsVerticalScrollIndicator={true}
               persistentScrollbar={true}
               nestedScrollEnabled
               contentContainerStyle={{ paddingBottom: 20 }}
             >
-
-              {
-                rotaAtiva.pontos
-
-                  .map((ponto) => (
-
-                    <TouchableOpacity
-                      key={ponto.id}
-                      style={[
-                        styles.pontoItem,
-                        ponto.concluido && styles.pontoConcluido,
-                      ]}
-                      onPress={() => selecionarSiteDaRota(ponto)}
-                      disabled={ponto.concluido}
-                    >
-                      <MaterialCommunityIcons
-                        name={ponto.concluido ? "check-circle" : "map-marker"}
-                        size={20}
-                        color={ponto.concluido ? "#28a745" : "#007BFF"}
-                      />
-                      <Text style={styles.pontoText}>
-                        {ponto.sigla}-{ponto.uf} - {ponto.descricao}
-                      </Text>
-                      {ponto.timestamp && (
-                        <Text style={styles.pontoTime}>
-                          {new Date(ponto.timestamp).toLocaleTimeString()}
-                        </Text>
-                      )}
-                      {!ponto.concluido && (
-                        <Text style={styles.pontoText}>Toque para registrar</Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
+              {rotaAtiva.pontos.map((ponto) => (
+                <TouchableOpacity
+                  key={ponto.id}
+                  style={[
+                    styles.pontoItem,
+                    ponto.concluido && styles.pontoConcluido,
+                  ]}
+                  onPress={() => selecionarSiteDaRota(ponto)}
+                  disabled={ponto.concluido}
+                >
+                  <MaterialCommunityIcons
+                    name={ponto.concluido ? "check-circle" : "map-marker"}
+                    size={20}
+                    color={ponto.concluido ? "#28a745" : "#007BFF"}
+                  />
+                  <Text style={styles.pontoText}>
+                    {ponto.sigla}-{ponto.uf} - {ponto.descricao}
+                  </Text>
+                  {ponto.timestamp && (
+                    <Text style={styles.pontoTime}>
+                      {new Date(ponto.timestamp).toLocaleTimeString()}
+                    </Text>
+                  )}
+                  {!ponto.concluido && (
+                    <Text style={styles.pontoText}>Toque para registrar</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
             </ScrollView>
           </View>
         )}
