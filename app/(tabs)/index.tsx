@@ -26,14 +26,19 @@ import {
   getDoc,
   query,
   where,
+  orderBy,
+  startAt,
+  endAt,
   getDocs,
   limit,
+  type DocumentData,
+  type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { otherDb, storage } from "@/services/firebaseConfig";
+import { otherDb, storage, aprDb } from "@/services/firebaseConfig";
 import { useRonda } from "./_layout";
 import styles from "@/assets/styles/stylesIndex";
 import KmModal from "@/components/modals/KmModal";
@@ -43,6 +48,24 @@ import TrocaVeiculoModal from "@/components/modals/TrocaVeiculoModal";
 
 const LOCATION_TASK_NAME = "background-location-task";
 const BACKGROUND_FETCH_TASK = "background-fetch-task";
+const SITUACOES_SITE_DETECTAVEL = new Set([
+  "ATIVO",
+  "ATIVO NAO ADQUIRIDO",
+]);
+
+const normalizarTexto = (value: unknown) =>
+  String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+
+const parseCoordenada = (value: unknown): number | null => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+
+  const coordenada = Number(String(value ?? "").trim().replace(",", "."));
+  return Number.isFinite(coordenada) ? coordenada : null;
+};
 
 interface Checkpoint {
   site: string;
@@ -1943,36 +1966,53 @@ export default function HomeScreen() {
       const snapshots = await Promise.all(promises);
       const sitesProximos: Site[] = [];
       const seen = new Set<string>();
-      for (const snapshot of snapshots) {
-        for (const docSnap of snapshot.docs) {
-          if (seen.has(docSnap.id)) continue;
-          seen.add(docSnap.id);
-          const siteData = docSnap.data();
-          const lat = String(siteData.Latitude);
-          const lng = String(siteData.Longitude);
 
-          const situacao = siteData.Situacao || "";
-          if (!["ATIVO", "ATIVO NÃO ADQUIRIDO"].includes(situacao)) continue;
+      const adicionarSiteSeProximo = (
+        docSnap: QueryDocumentSnapshot<DocumentData>,
+      ) => {
+        if (seen.has(docSnap.id)) return;
+        seen.add(docSnap.id);
+        const siteData = docSnap.data();
+        const lat = parseCoordenada(siteData.Latitude);
+        const lng = parseCoordenada(siteData.Longitude);
 
-          const distanceInKm = distanceBetween([lat, lng], center);
+        if (lat === null || lng === null) return;
 
-          if (distanceInKm <= 10) {
-            sitesProximos.push({
-              id: docSnap.id,
-              nome: siteData.Nome || "",
-              sigla: siteData.Sigla || "",
-              endereco: siteData.Endereco || "",
-              latitude: lat,
-              longitude: lng,
-              raio: siteData.raio || 0,
-              uf: siteData.Estado || "",
-              status: situacao,
-              createdBy: siteData.createdBy || siteData.created || "",
-              idOriginalPerimetro: siteData.idOriginalPerimetro || "",
-              geohash: siteData.geohash || "",
-            });
-          }
+        const situacao = String(siteData.Situacao ?? "").trim();
+        const situacaoNormalizada = normalizarTexto(situacao);
+        if (!SITUACOES_SITE_DETECTAVEL.has(situacaoNormalizada)) return;
+
+        const distanceInKm = distanceBetween([lat, lng], center);
+
+        if (distanceInKm <= 10) {
+          sitesProximos.push({
+            id: docSnap.id,
+            nome: siteData.Nome || "",
+            sigla: siteData.Sigla || "",
+            endereco: siteData.Endereco || "",
+            latitude: lat,
+            longitude: lng,
+            raio: siteData.raio || 0,
+            uf: siteData.Estado || "",
+            regional: siteData.Regional || "",
+            status: situacao,
+            createdBy: siteData.createdBy || siteData.created || "",
+            idOriginalPerimetro: siteData.idOriginalPerimetro || "",
+            dataInicio: siteData.dataInicio || siteData.lastUpdate || null,
+            dataFim: siteData.dataFim || null,
+            geohash: siteData.geohash || "",
+          });
         }
+      };
+
+      for (const snapshot of snapshots) {
+        snapshot.docs.forEach(adicionarSiteSeProximo);
+      }
+
+      if (sitesProximos.length === 0) {
+        seen.clear();
+        const fallbackSnapshot = await getDocs(sitesRef);
+        fallbackSnapshot.docs.forEach(adicionarSiteSeProximo);
       }
 
       sitesProximos.sort((a, b) => {
