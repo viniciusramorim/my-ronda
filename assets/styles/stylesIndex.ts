@@ -457,6 +457,42 @@ const styles = StyleSheet.create({
         fontSize: 12,
         color: '#28a745',
     },
+    rondaSelectionContainer: {
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        padding: 15,
+        borderRadius: 15,
+        marginVertical: 10,
+        borderWidth: 1,
+        borderColor: 'rgba(255, 255, 255, 0.1)',
+    },
+    sectionTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#fff',
+        marginBottom: 15,
+        textAlign: 'center',
+    },
+    rondaButtonsRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: 10,
+    },
+    modoRotaButtonHome: {
+        flex: 1,
+        backgroundColor: 'rgba(255, 255, 255, 0.1)',
+        padding: 15,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+    },
+    modoRotaTitleHome: {
+        fontSize: 14,
+        fontWeight: 'bold',
+        color: '#fff',
+        marginTop: 8,
+        textAlign: 'center',
+    },
 });
 
 export default styles;

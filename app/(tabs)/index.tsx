@@ -2096,18 +2096,44 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <Text style={styles.welcomeText}>Bem-vindo(a), {user}.</Text>
 
-        <TouchableOpacity
-          style={[
-            styles.button,
-            isTracking ? styles.buttonStop : styles.buttonStart,
-          ]}
-          onPress={isTracking ? stopTracking : startTracking}
-          disabled={uploading}
-        >
-          <Text style={styles.buttonText}>
-            {isTracking ? "Finalizar Atividade" : "Iniciar Atividade"}
-          </Text>
-        </TouchableOpacity>
+        {isTracking ? (
+          <TouchableOpacity
+            style={[styles.button, styles.buttonStop]}
+            onPress={stopTracking}
+            disabled={uploading}
+          >
+            <Text style={styles.buttonText}>Finalizar Ronda</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.rondaSelectionContainer}>
+            <Text style={styles.sectionTitle}>Iniciar Ronda</Text>
+            <View style={styles.rondaButtonsRow}>
+              <TouchableOpacity
+                style={[styles.modoRotaButtonHome, { borderColor: "#007BFF" }]}
+                onPress={() => selecionarModoRota("livre")}
+              >
+                <MaterialCommunityIcons
+                  name="map-marker-radius"
+                  size={32}
+                  color="#007BFF"
+                />
+                <Text style={styles.modoRotaTitleHome}>Rota Livre</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modoRotaButtonHome, { borderColor: "#28a745" }]}
+                onPress={() => selecionarModoRota("predefinida")}
+              >
+                <MaterialCommunityIcons
+                  name="map-marker-path"
+                  size={32}
+                  color="#28a745"
+                />
+                <Text style={styles.modoRotaTitleHome}>Rota Pré-definida</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Modal de Seleção de Modo de Rota */}
         <Modal
@@ -2117,51 +2143,7 @@ export default function HomeScreen() {
         >
           <View style={styles.modalContainer}>
             <View style={styles.modalContent}>
-              {!modoRota ? (
-                // Seleção inicial do modo
-                <>
-                  <Text style={styles.modalTitle}>
-                    Selecione o Modo de Ronda
-                  </Text>
-
-                  <TouchableOpacity
-                    style={styles.modoRotaButton}
-                    onPress={() => selecionarModoRota("livre")}
-                  >
-                    <MaterialCommunityIcons
-                      name="map-marker-radius"
-                      size={40}
-                      color="#007BFF"
-                    />
-                    <Text style={styles.modoRotaTitle}>Rota Livre</Text>
-                    <Text style={styles.modoRotaDescricao}>
-                      Registre checkpoints livremente sem uma rota pré-definida
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.modoRotaButton}
-                    onPress={() => selecionarModoRota("predefinida")}
-                  >
-                    <MaterialCommunityIcons
-                      name="map-marker-path"
-                      size={40}
-                      color="#28a745"
-                    />
-                    <Text style={styles.modoRotaTitle}>Rota Pré-definida</Text>
-                    <Text style={styles.modoRotaDescricao}>
-                      Siga uma rota com pontos pré-definidos em sequência
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.buttonCancel}
-                    onPress={() => setMostrarSelecaoRota(false)}
-                  >
-                    <Text style={styles.buttonText}>Cancelar</Text>
-                  </TouchableOpacity>
-                </>
-              ) : (
+              {modoRota === "predefinida" && (
                 // Seleção de rota específica (apenas para modo pré-definido)
                 <>
                   <Text style={styles.modalTitle}>
