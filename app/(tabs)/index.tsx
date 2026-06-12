@@ -9,7 +9,9 @@ import {
   AppState,
   ActivityIndicator,
   Linking,
+  AppStateStatus,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { geohashQueryBounds, distanceBetween } from "geofire-common";
 import { Picker } from "@react-native-picker/picker";
 import * as Location from "expo-location";
@@ -38,7 +40,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { otherDb, storage, db } from "@/services/firebaseConfig";
+import { otherDb, storage, db, firebase } from "@/services/firebaseConfig";
 import { useRonda } from "./_layout";
 import styles from "@/assets/styles/stylesIndex";
 import KmModal from "@/components/modals/KmModal";
@@ -73,6 +75,9 @@ interface Checkpoint {
   site: string;
   motivo: string;
   timestamp: string;
+  latitude?: number;
+  longitude?: number;
+  comentario?: string;
   imageUrl?: string;
 }
 
@@ -263,6 +268,7 @@ TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
 });
 
 export default function HomeScreen() {
+  const router = useRouter();
   const { isTracking, setIsTracking } = useRonda();
   const [location, setLocation] = useState<any>(null);
   const [subscription, setSubscription] = useState<any>(null);
@@ -284,7 +290,7 @@ export default function HomeScreen() {
   const [uf, setUf] = useState<string>("");
   const [showPanicModal, setShowPanicModal] = useState(false);
   const [showCheckpointModal, setShowCheckpointModal] = useState(false);
-  const [appState, setAppState] = useState(AppState.currentState);
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
 
   // Novos estados para rota pré-definida
   const [rotasPreDefinidas, setRotasPreDefinidas] = useState<RotaPreDefinida[]>(
@@ -354,7 +360,7 @@ export default function HomeScreen() {
               { text: "Cancelar", style: "cancel" },
               {
                 text: "Abrir Configurações",
-                onPress: () => Location.openSettings(),
+                onPress: () => Linking.openSettings(),
               },
             ],
           );
@@ -398,7 +404,7 @@ export default function HomeScreen() {
               { text: "Cancelar", style: "cancel" },
               {
                 text: "Abrir Configurações",
-                onPress: () => Location.openSettings(),
+                onPress: () => Linking.openSettings(),
               },
             ],
           );
@@ -409,6 +415,44 @@ export default function HomeScreen() {
       }
     }
     return true;
+  }, []);
+
+  // Verificar se o usuário está autenticado no Firebase Auth
+  const verificarAuthFirebase = useCallback(async () => {
+    console.log("[Auth] Verificando sessão do Firebase...");
+    return new Promise<boolean>((resolve) => {
+      // Tenta obter o usuário atual imediatamente
+      const current = firebase.auth().currentUser;
+      if (current) {
+        console.log("[Auth] Usuário já autenticado:", current.uid);
+        resolve(true);
+        return;
+      }
+
+      // Se não tiver, aguarda o primeiro evento de mudança de estado
+      const unsubscribe = firebase.auth().onAuthStateChanged((user: any) => {
+        unsubscribe();
+        if (user) {
+          console.log("[Auth] Sessão recuperada com sucesso:", user.uid);
+          resolve(true);
+        } else {
+          console.log("[Auth] Nenhuma sessão ativa encontrada no Firebase.");
+          resolve(false);
+        }
+      });
+
+      // Timeout de segurança
+      setTimeout(() => {
+        unsubscribe();
+        const retryUser = firebase.auth().currentUser;
+        if (retryUser) {
+          resolve(true);
+        } else {
+          console.log("[Auth] Timeout na verificação de autenticação.");
+          resolve(false);
+        }
+      }, 5000);
+    });
   }, []);
 
   // Carregar dados do usuário
@@ -968,7 +1012,7 @@ export default function HomeScreen() {
 
   // Lidar com mudanças no estado do app
   useEffect(() => {
-    const handleAppStateChange = async (nextAppState: string) => {
+    const handleAppStateChange = async (nextAppState: AppStateStatus) => {
       if (appState.match(/inactive|background/) && nextAppState === "active") {
         console.log("App voltou para primeiro plano");
 
@@ -997,6 +1041,32 @@ export default function HomeScreen() {
   // Efeito inicial
   useEffect(() => {
     const initialize = async () => {
+      console.log("[Init] Iniciando aplicação...");
+      
+      // 1. Verificar autenticação no Firebase
+      const estaAutenticado = await verificarAuthFirebase();
+      
+      if (!estaAutenticado) {
+        const loggedIn = await AsyncStorage.getItem("loggedIn");
+        if (loggedIn === "true") {
+          console.log("[Init] Usuário acha que está logado mas Firebase não confirma. Redirecionando...");
+          Alert.alert(
+            "Sessão Expirada",
+            "Sua sessão de segurança expirou. Por favor, faça login novamente para continuar.",
+            [
+              {
+                text: "Ok",
+                onPress: async () => {
+                  await AsyncStorage.removeItem("loggedIn");
+                  router.replace("/(auth)/login");
+                },
+              },
+            ],
+          );
+          return;
+        }
+      }
+
       await registerBackgroundTasks();
       await checkAndRequestPermissions();
       await userData();
@@ -2037,42 +2107,54 @@ export default function HomeScreen() {
         for (const snapshot of snapshots) {
           snapshot.docs.forEach(adicionarSiteSeProximo);
         }
-      } catch (geohashError) {
+      } catch (geohashError: any) {
         console.error("[Audit] Erro na busca por geohash:", geohashError);
+        // Propaga o erro se for de permissão para que o catch externo trate
+        if (geohashError?.message?.includes("permissions") || geohashError?.code === "permission-denied") {
+          throw geohashError;
+        }
       }
 
       // 3. Verificação de Dados (Fallback temporário para teste)
       if (sitesProximos.length === 0) {
         console.log("[Audit] Nenhum site próximo encontrado. Buscando 10 primeiros para verificação...");
-        const verificationQuery = query(sitesRef, limit(10));
-        const verificationSnapshot = await getDocs(verificationQuery);
-        console.log(`[Audit] Verificação: Encontrados ${verificationSnapshot.size} sites aleatórios.`);
+        try {
+          const verificationQuery = query(sitesRef, limit(10));
+          const verificationSnapshot = await getDocs(verificationQuery);
+          console.log(`[Audit] Verificação: Encontrados ${verificationSnapshot.size} sites aleatórios.`);
 
-        verificationSnapshot.docs.forEach((docSnap) => {
-          if (seen.has(docSnap.id)) return;
-          seen.add(docSnap.id);
-          const siteData = docSnap.data();
-          const lat = parseCoordenada(siteData.Latitude ?? siteData.latitude ?? siteData.Latitude_GVT) || 0;
-          const lng = parseCoordenada(siteData.Longitude ?? siteData.longitude ?? siteData.Longitude_GVT) || 0;
+          verificationSnapshot.docs.forEach((docSnap) => {
+            if (seen.has(docSnap.id)) return;
+            seen.add(docSnap.id);
+            const siteData = docSnap.data();
+            const lat = parseCoordenada(siteData.Latitude ?? siteData.latitude ?? siteData.Latitude_GVT) || 0;
+            const lng = parseCoordenada(siteData.Longitude ?? siteData.longitude ?? siteData.Longitude_GVT) || 0;
 
-          sitesProximos.push({
-            id: docSnap.id,
-            nome: siteData.Nome || "SEM NOME",
-            sigla: siteData.Sigla || "SEM SIGLA",
-            endereco: siteData.Endereco || "SEM ENDERECO",
-            latitude: lat,
-            longitude: lng,
-            raio: siteData.raio || 0,
-            uf: siteData.Estado || "",
-            regional: siteData.Regional || "",
-            status: String(siteData.Situacao ?? "SEM STATUS"),
-            createdBy: siteData.createdBy || "",
-            idOriginalPerimetro: siteData.idOriginalPerimetro || "",
-            dataInicio: siteData.dataInicio || null,
-            dataFim: siteData.dataFim || null,
-            geohash: siteData.geohash || "",
+            sitesProximos.push({
+              id: docSnap.id,
+              nome: siteData.Nome || "SEM NOME",
+              sigla: siteData.Sigla || "SEM SIGLA",
+              endereco: siteData.Endereco || "SEM ENDERECO",
+              latitude: lat,
+              longitude: lng,
+              raio: siteData.raio || 0,
+              uf: siteData.Estado || "",
+              regional: siteData.Regional || "",
+              status: String(siteData.Situacao ?? "SEM STATUS"),
+              createdBy: siteData.createdBy || "",
+              idOriginalPerimetro: siteData.idOriginalPerimetro || "",
+              dataInicio: siteData.dataInicio || null,
+              dataFim: siteData.dataFim || null,
+              geohash: siteData.geohash || "",
+            });
           });
-        });
+        } catch (verificationError: any) {
+          console.error("[Audit] Erro na verificação de sites:", verificationError);
+          // Propaga o erro se for de permissão para que o catch externo trate
+          if (verificationError?.message?.includes("permissions") || verificationError?.code === "permission-denied") {
+            throw verificationError;
+          }
+        }
       }
 
       const totalDuration = Date.now() - startTime;
@@ -2085,8 +2167,28 @@ export default function HomeScreen() {
       });
 
       return sitesProximos.slice(0, limite);
-    } catch (error) {
+    } catch (error: any) {
       console.error("[Audit] Erro crítico em encontrarSitesProximosComGeohash:", error);
+      
+      // Se o erro for de permissão insuficiente, redirecionar para login para re-autenticar
+      if (error?.message?.includes("Missing or insufficient permissions") || 
+          error?.code === "permission-denied") {
+        console.log("[Audit] Erro de permissão detectado. Redirecionando para login...");
+        Alert.alert(
+          "Sessão Expirada",
+          "Sua sessão parece ter expirado ou você não tem permissão para acessar estes dados. Por favor, faça login novamente.",
+          [
+            {
+              text: "Ir para Login",
+              onPress: async () => {
+                await AsyncStorage.removeItem("loggedIn");
+                router.replace("/(auth)/login");
+              }
+            }
+          ]
+        );
+      }
+      
       return [];
     }
   };
