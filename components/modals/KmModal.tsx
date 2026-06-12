@@ -64,73 +64,23 @@ const KmModal: React.FC<KmModalProps> = ({
     onPlacaChange(cleaned);
   };
 
-  
-const handleKmChange = (text: string) => {
-  const cleaned = text.replace(/\D/g, "");
-  onKmChange(cleaned);
-};
 
-
-  // Função para aplicar a máscara do KM (100.000)
-  {/*const handleKmChange = (text: string) => {
-    // Remove tudo que não é número, exceto ponto
-    let cleaned = text.replace(/[^\d.]/g, '');
-    
-    // Remove pontos extras, mantendo apenas o último
-    const parts = cleaned.split('.');
-    if (parts.length > 2) {
-      cleaned = parts[0] + '.' + parts.slice(1).join('');
-    }
-    
-    // Limita para apenas 1 ponto decimal
-    if ((cleaned.match(/\./g) || []).length > 1) {
-      cleaned = cleaned.replace(/\.+$/, '');
-    }
-    
-    // Limita a 6 números antes do ponto e 3 depois (formato: 999999.999)
-    const numberParts = cleaned.split('.');
-    if (numberParts[0].length > 6) {
-      numberParts[0] = numberParts[0].substring(0, 6);
-    }
-    if (numberParts[1] && numberParts[1].length > 3) {
-      numberParts[1] = numberParts[1].substring(0, 3);
-    }
-    
-    cleaned = numberParts.join('.');
-    
+  const handleKmChange = (text: string) => {
+    const cleaned = text.replace(/\D/g, "");
     onKmChange(cleaned);
   };
 
-  // Função para formatar o valor do KM para exibição (adiciona separadores de milhar)
-  const formatKmDisplay = (value: string) => {
-    if (!value) return value;
-    
-    const parts = value.split('.');
-    let integerPart = parts[0];
-    
-    // Adiciona separadores de milhar
-    if (integerPart.length > 3) {
-      integerPart = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-    }
-    
-    return parts[1] ? integerPart + ',' + parts[1] : integerPart;
-  };*/}
 
-  const formatKmDisplay = (value: string) => {
-    if (!value) return "";
-    return value.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+
+  const normalizarKm = (valor: string): number => {
+    if (!valor) return NaN;
+
+    const somenteNumeros = valor.replace(/\D/g, "");
+
+    const numero = Number(somenteNumeros);
+
+    return isNaN(numero) ? NaN : numero;
   };
- 
-  
-const normalizarKm = (valor: string): number => {
-  if (!valor) return NaN;
-
-  const somenteNumeros = valor.replace(/\D/g, "");
-
-  const numero = Number(somenteNumeros);
-
-  return isNaN(numero) ? NaN : numero;
-};
 
 
   const handleConfirmPress = async () => {
@@ -165,59 +115,66 @@ const normalizarKm = (valor: string): number => {
     // VERIFICAÇÃO DE KM FINAL
     if (type === 'fim') {
 
-  // ✅ GARANTE QUE KM INICIAL EXISTE
-  if (!kmInicial) {
-    Alert.alert("Erro", "KM inicial não encontrado.");
-    return;
-  }
+      // ✅ GARANTE QUE KM INICIAL EXISTE
+      if (!kmInicial) {
+        Alert.alert("Erro", "KM inicial não encontrado.");
+        return;
+      }
 
-  if (isNaN(kmIni)) {
-    Alert.alert("Erro", "KM inicial inválido.");
-    return;
-  }
+      if (isNaN(kmIni)) {
+        Alert.alert("Erro", "KM inicial inválido.");
+        return;
+      }
 
-  if (kmAtual < 0) {
-    Alert.alert('Erro', 'KM final não pode ser negativo.');
-    return;
-  }
+      if (kmAtual < 0) {
+        Alert.alert('Erro', 'KM final não pode ser negativo.');
+        return;
+      }
 
-  if (kmAtual <= kmIni) {
-    Alert.alert(
-      'Erro de quilometragem',
-      `O KM final (${kmAtual}) deve ser maior que o KM inicial (${kmIni}).`
-    );
-    return;
-  }
+      if (kmAtual <= kmIni) {
+        Alert.alert(
+          'Erro de quilometragem',
+          `O KM final (${kmAtual}) deve ser maior que o KM inicial (${kmIni}).`
+        );
+        return;
+      }
 
-  const diferenca = kmAtual - kmIni;
+      const diferenca = kmAtual - kmIni;
 
-  //  DEBUG 
-  console.log("KM INICIAL:", kmIni);
-  console.log("KM FINAL:", kmAtual);
-  console.log("DIFERENÇA:", diferenca);
+      //  DEBUG 
+      console.log("DEBUG - KmModal Confirmação:", {
+        type,
+        kmInicialProp: kmInicial,
+        kmIniNormalizado: kmIni,
+        kmAtualNormalizado: kmAtual
+      });
+      
+      console.log("KM INICIAL:", kmIni);
+      console.log("KM FINAL:", kmAtual);
+      console.log("DIFERENÇA:", diferenca);
 
-  //  BLOQUEIO
-  if (!isNaN(diferenca) && diferenca >= 1500) {
-    Alert.alert(
-      'Bloqueado',
-      `Limite máximo de 1500 km ultrapassado (${diferenca}).`
-    );
-    return;
-  }
+      //  BLOQUEIO
+      if (!isNaN(diferenca) && diferenca >= 1500) {
+        Alert.alert(
+          'Bloqueado',
+          `Limite máximo de 1500 km ultrapassado (${diferenca}).`
+        );
+        return;
+      }
 
-  // ALERTA
-  if (!isNaN(diferenca) && diferenca > 1000) {
-    Alert.alert(
-      'Atenção',
-      `Percorrido ${diferenca} km. Deseja continuar?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Confirmar', onPress: () => onConfirm(tipoRonda) }
-      ]
-    );
-    return;
-  }
-}
+      // ALERTA
+      if (!isNaN(diferenca) && diferenca > 1000) {
+        Alert.alert(
+          'Atenção',
+          `Percorrido ${diferenca} km. Deseja continuar?`,
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            { text: 'Confirmar', onPress: () => onConfirm(tipoRonda) }
+          ]
+        );
+        return;
+      }
+    }
     onConfirm(tipoRonda);
   };
 

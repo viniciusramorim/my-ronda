@@ -26,7 +26,7 @@ interface Props {
   image: string | null;
   onTakeImage: () => void;
   onCancel: () => void;
-   onConfirm: (tipo: 'site' | 'loja' | null) => void;
+  onConfirm: () => void;
   uploading: boolean;
 }
 
@@ -80,7 +80,7 @@ interface CheckpointModalProps {
   image: string | null;
   onTakeImage: () => void;
   onCancel: () => void;
-  onConfirm: (tipo: 'site' | 'loja' | null) => void;
+  onConfirm: () => void;
   uploading: boolean;
   // Novas props para detecção automática
   onAutoDetect?: () => void;
@@ -105,13 +105,10 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
   location,
   ///modoRota,
 }) => {
-  const [tipoSigla, setTipoSigla] = useState<'site' | 'loja' | null>(null);
+
 
   const [userRegional, setUserRegional] = useState<RegionalCodigo | null>(null);
   const [ufsPermitidas, setUfsPermitidas] = useState<string[]>([]);
-  const [siglaMovelInput, setSiglaMovelInput] = useState('');
-  const [confirmada, setConfirmada] = useState(false);
-  const [sucesso, setSucesso] = useState(false);
 
 
   // Função para aplicar a máscara da sigla (3 caracteres maiúsculos)
@@ -178,40 +175,17 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
           <Text style={styles.modalTitle}>Registrar Ronda</Text>
 
           {/* Botão de detecção automática - apenas no modo livre */}
-          
-            <TouchableOpacity
-              style={styles.autoDetectButton}
-              onPress={handleAutoDetect}
-              disabled={uploading}
-            >
-              <MaterialCommunityIcons name="radar" size={20} color="#fff" />
-              <Text style={styles.autoDetectButtonText}>
-                Buscar Site Mais Próximo
-              </Text>
-            </TouchableOpacity>
-          
 
-          <Text style={styles.label}>Tipo</Text>
-
-          <View style={styles.row}>
-            {['site', 'loja'].map(t => (
-              <TouchableOpacity
-                key={t}
-                style={[
-                  styles.typeBtn,
-                  tipoSigla === t && styles.selected
-                ]}
-                onPress={() => {
-                  setTipoSigla(t as 'site' | 'loja');
-                  setConfirmada(false);
-                  setSucesso(false);
-                  setSiglaMovelInput('');
-                }}
-              >
-                <Text>{t.toUpperCase()}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          <TouchableOpacity
+            style={styles.autoDetectButton}
+            onPress={handleAutoDetect}
+            disabled={uploading}
+          >
+            <MaterialCommunityIcons name="radar" size={20} color="#fff" />
+            <Text style={styles.autoDetectButtonText}>
+              Buscar Site Mais Próximo
+            </Text>
+          </TouchableOpacity>
 
 
           {/*<Text style={styles.sectionLabel}>Sigla do Site</Text>
@@ -275,21 +249,20 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
               ))}
             </Picker>
           </View>
-          <Text style={styles.label}>Buscar local</Text>
+          <Text style={styles.label}>Sigla</Text>
 
           {/* ✅ COMPONENTE DE BUSCA FUNCIONANDO */}
-         <TextInput
+          <TextInput
             style={styles.modalInput}
-            placeholder="Digite a sigla (ex: SP1) - Máx. 3 letras"
+            placeholder="Digite a sigla"
             placeholderTextColor="#999"
             value={siteCode}
             onChangeText={handleSiglaChange}
             editable={!uploading}
-            maxLength={3}
             autoCapitalize="characters"
           />
 
-         
+
 
           <Text style={styles.sectionLabel}>Comentário</Text>
           <TextInput
@@ -353,8 +326,8 @@ const CheckpointModal: React.FC<CheckpointModalProps> = ({
                 styles.modalButtonConfirm,
                 (!siteCode || !uf) && styles.buttonDisabled
               ]}
-              onPress={() => onConfirm(tipoSigla)}
-              disabled={uploading || !siteCode || !uf || !tipoSigla}
+              onPress={() => onConfirm()}
+              disabled={uploading || !siteCode || !uf}
             >
               <Text style={styles.modalButtonText}>
                 {uploading ? 'Enviando...' : 'Confirmar'}
@@ -555,30 +528,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  tipoContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 15,
-  },
-  tipoButton: {
-    flex: 1,
-    marginHorizontal: 4,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    backgroundColor: '#e9ecef',
-    borderWidth: 1,
-    borderColor: '#ced4da',
-  },
-  tipoButtonSelecionado: {
-    backgroundColor: '#007BFF',
-    borderColor: '#0056b3',
-  },
-  tipoButtonText: {
-    fontSize: 15,
-    fontWeight: 'bold',
-    color: '#333',
-  },
+
   listaLocais: {
     marginBottom: 15,
   },
@@ -713,9 +663,7 @@ const styles = StyleSheet.create({
   autoText: { color: '#fff', marginLeft: 6 },
   label: { marginTop: 10, fontWeight: '600' },
   input: { borderWidth: 1, borderRadius: 8, padding: 10, marginTop: 5 },
-  row: { flexDirection: 'row', marginTop: 10 },
-  typeBtn: { flex: 1, borderWidth: 1, padding: 10, margin: 4 },
-  selected: { backgroundColor: '#e0f0ff' },
+
   option: { padding: 10, borderBottomWidth: 1 },
   ok: { color: '#28a745', marginTop: 6 },
   error: { color: '#007BFF', marginTop: 6 },

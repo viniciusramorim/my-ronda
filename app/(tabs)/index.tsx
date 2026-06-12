@@ -38,7 +38,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { otherDb, storage, aprDb } from "@/services/firebaseConfig";
+import { otherDb, storage, db } from "@/services/firebaseConfig";
 import { useRonda } from "./_layout";
 import styles from "@/assets/styles/stylesIndex";
 import KmModal from "@/components/modals/KmModal";
@@ -51,6 +51,8 @@ const BACKGROUND_FETCH_TASK = "background-fetch-task";
 const SITUACOES_SITE_DETECTAVEL = new Set([
   "ATIVO",
   "ATIVO NAO ADQUIRIDO",
+  "ATIVO ADQUIRIDO",
+  "PREVISTO",
 ]);
 
 const normalizarTexto = (value: unknown) =>
@@ -595,7 +597,7 @@ export default function HomeScreen() {
           concluido: temCheckpoint,
           timestamp: temCheckpoint
             ? checkpointsCarregados.find((c) => c.site === siteFormatado)
-                ?.timestamp || ""
+              ?.timestamp || ""
             : "",
         };
       });
@@ -652,9 +654,9 @@ export default function HomeScreen() {
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
       Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
@@ -795,11 +797,11 @@ export default function HomeScreen() {
                 "s atrás, distância:",
                 ultimaLocalizacaoSalva
                   ? calcularDistancia(
-                      loc.coords.latitude,
-                      loc.coords.longitude,
-                      ultimaLocalizacaoSalva.lat,
-                      ultimaLocalizacaoSalva.lng,
-                    ) * 1000
+                    loc.coords.latitude,
+                    loc.coords.longitude,
+                    ultimaLocalizacaoSalva.lat,
+                    ultimaLocalizacaoSalva.lng,
+                  ) * 1000
                   : 0,
                 "metros",
               );
@@ -844,6 +846,9 @@ export default function HomeScreen() {
         if (rondaDoc.exists()) {
           const data = rondaDoc.data();
           setRondaDetails(data);
+          
+          if (data.kmInicial) setKmInicial(String(data.kmInicial));
+          if (data.placaInicial) setPlacaInicial(data.placaInicial);
 
           // Restaurar modo da rota
           if (modoRotaSalvo) {
@@ -1213,11 +1218,11 @@ export default function HomeScreen() {
       const pontosAtualizados = rotaAtiva.pontos.map((ponto) =>
         ponto.id === proximoPonto.id
           ? {
-              ...ponto,
-              concluido: true,
-              ativo: false,
-              timestamp: new Date().toISOString(),
-            }
+            ...ponto,
+            concluido: true,
+            ativo: false,
+            timestamp: new Date().toISOString(),
+          }
           : ponto,
       );
 
@@ -1370,6 +1375,8 @@ export default function HomeScreen() {
       setImage(null);
 
       await AsyncStorage.setItem("rondaId", novaRondaId);
+      await AsyncStorage.setItem("kmInicial", String(kmInicialNumero));
+      await AsyncStorage.setItem("placaInicial", placaInicial);
       await salvarEstadoRota();
 
       // Reset da variável de controle
@@ -1397,6 +1404,7 @@ export default function HomeScreen() {
 
   // Parar ronda
   const stopTracking = async () => {
+    console.log("DEBUG - stopTracking chamado. kmInicial no estado:", kmInicial);
     setShowKmModal("fim");
   };
 
@@ -1491,7 +1499,12 @@ export default function HomeScreen() {
         setModoRota(null);
       }, 1000);
 
-      await AsyncStorage.removeItem("rondaId");
+      await AsyncStorage.multiRemove([
+        "rondaId",
+        "kmInicial",
+        "placaInicial",
+        "modoRota",
+      ]);
       await limparEstadoRota();
 
       Alert.alert("Sucesso", "Ronda finalizada com sucesso!");
@@ -1949,22 +1962,25 @@ export default function HomeScreen() {
     longitude: number,
     limite: number = 10,
   ): Promise<Site[]> => {
-    try {
-      const center: [number, number] = [latitude, longitude];
-      const radiusInM = 10 * 1000;
-      const bounds = geohashQueryBounds(center, radiusInM);
-      const sitesRef = collection(aprDb, "sites");
-      const sitesProximos: Site[] = [];
-      const seen = new Set<string>();
+    const center: [number, number] = [latitude, longitude];
+    const radiusInM = 10 * 1000;
+    const bounds = geohashQueryBounds(center, radiusInM);
+    const sitesRef = collection(db, "sites");
+    const sitesProximos: Site[] = [];
+    const seen = new Set<string>();
+    const startTime = Date.now();
 
-      const adicionarSiteSeProximo = (
-        docSnap: QueryDocumentSnapshot<DocumentData>,
-      ) => {
+    console.log(`[Audit] Iniciando busca de sites: [${latitude}, ${longitude}]`);
+
+    const adicionarSiteSeProximo = (
+      docSnap: QueryDocumentSnapshot<DocumentData>,
+    ) => {
+      try {
         if (seen.has(docSnap.id)) return;
         seen.add(docSnap.id);
         const siteData = docSnap.data();
-        const lat = parseCoordenada(siteData.Latitude);
-        const lng = parseCoordenada(siteData.Longitude);
+        const lat = parseCoordenada(siteData.Latitude ?? siteData.latitude ?? siteData.Latitude_GVT);
+        const lng = parseCoordenada(siteData.Longitude ?? siteData.longitude ?? siteData.Longitude_GVT);
 
         if (lat === null || lng === null) return;
 
@@ -1995,56 +2011,72 @@ export default function HomeScreen() {
             geohash: siteData.geohash || "",
           });
         }
-      };
+      } catch (err) {
+        console.error(`[Audit] Erro ao processar documento ${docSnap.id}:`, err);
+      }
+    };
 
+    try {
+      // 1. Busca por Geohash
       try {
+        const geohashStartTime = Date.now();
         const promises = bounds.map((bound) => {
           const q = query(
             sitesRef,
             orderBy("geohash"),
             startAt(bound[0]),
             endAt(bound[1]),
+            limit(50),
           );
           return getDocs(q);
         });
         const snapshots = await Promise.all(promises);
+        const geohashDuration = Date.now() - geohashStartTime;
+        console.log(`[Audit] Geohash finalizado em ${geohashDuration}ms. Docs encontrados: ${snapshots.reduce((acc, s) => acc + s.size, 0)}`);
 
         for (const snapshot of snapshots) {
           snapshot.docs.forEach(adicionarSiteSeProximo);
         }
       } catch (geohashError) {
-        console.warn(
-          "Busca por geohash falhou; tentando busca direta por distância.",
-          geohashError,
-        );
+        console.error("[Audit] Erro na busca por geohash:", geohashError);
       }
 
-      try {
-        const situacoesSiteDetectavelQuery = [
-          "ATIVO",
-          "ATIVO NÃO ADQUIRIDO",
-          "ATIVO NAO ADQUIRIDO",
-        ];
-        const fallbackPromises = situacoesSiteDetectavelQuery.map(
-          (situacao) =>
-            getDocs(query(sitesRef, where("Situacao", "==", situacao))),
-        );
-        const fallbackSnapshots = await Promise.all(fallbackPromises);
-        for (const snapshot of fallbackSnapshots) {
-          snapshot.docs.forEach(adicionarSiteSeProximo);
-        }
-      } catch (situacaoError) {
-        console.warn(
-          "Busca por situação falhou; tentando varredura completa.",
-          situacaoError,
-        );
-      }
-
+      // 3. Verificação de Dados (Fallback temporário para teste)
       if (sitesProximos.length === 0) {
-        seen.clear();
-        const fallbackSnapshot = await getDocs(sitesRef);
-        fallbackSnapshot.docs.forEach(adicionarSiteSeProximo);
+        console.log("[Audit] Nenhum site próximo encontrado. Buscando 10 primeiros para verificação...");
+        const verificationQuery = query(sitesRef, limit(10));
+        const verificationSnapshot = await getDocs(verificationQuery);
+        console.log(`[Audit] Verificação: Encontrados ${verificationSnapshot.size} sites aleatórios.`);
+
+        verificationSnapshot.docs.forEach((docSnap) => {
+          if (seen.has(docSnap.id)) return;
+          seen.add(docSnap.id);
+          const siteData = docSnap.data();
+          const lat = parseCoordenada(siteData.Latitude ?? siteData.latitude ?? siteData.Latitude_GVT) || 0;
+          const lng = parseCoordenada(siteData.Longitude ?? siteData.longitude ?? siteData.Longitude_GVT) || 0;
+
+          sitesProximos.push({
+            id: docSnap.id,
+            nome: siteData.Nome || "SEM NOME",
+            sigla: siteData.Sigla || "SEM SIGLA",
+            endereco: siteData.Endereco || "SEM ENDERECO",
+            latitude: lat,
+            longitude: lng,
+            raio: siteData.raio || 0,
+            uf: siteData.Estado || "",
+            regional: siteData.Regional || "",
+            status: String(siteData.Situacao ?? "SEM STATUS"),
+            createdBy: siteData.createdBy || "",
+            idOriginalPerimetro: siteData.idOriginalPerimetro || "",
+            dataInicio: siteData.dataInicio || null,
+            dataFim: siteData.dataFim || null,
+            geohash: siteData.geohash || "",
+          });
+        });
       }
+
+      const totalDuration = Date.now() - startTime;
+      console.log(`[Audit] Busca completa finalizada em ${totalDuration}ms. Sites encontrados: ${sitesProximos.length}`);
 
       sitesProximos.sort((a, b) => {
         const distA = distanceBetween([a.latitude, a.longitude], center);
@@ -2054,7 +2086,7 @@ export default function HomeScreen() {
 
       return sitesProximos.slice(0, limite);
     } catch (error) {
-      console.error("Erro ao buscar sites com Geohash:", error);
+      console.error("[Audit] Erro crítico em encontrarSitesProximosComGeohash:", error);
       return [];
     }
   };
@@ -2298,7 +2330,7 @@ export default function HomeScreen() {
             uploading={uploading}
             onAutoDetect={buscarSitesProximosManualmente}
             location={location}
-            //modoRota={modoRota}
+          //modoRota={modoRota}
           />
         </Modal>
 
