@@ -1,9 +1,8 @@
-// src/firebase.ts
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/storage';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -20,13 +19,20 @@ const firebaseConfig = {
 // Inicializa o app Firebase
 const app = firebase.initializeApp(firebaseConfig);
 
-// Firestore padrão (compatível)
+// Firestore padrão (compatível) com persistência
 const db = firebase.firestore();
+db.enablePersistence().catch((err) => {
+    console.warn("Firestore compatibility persistence error:", err.code);
+});
 
-// Firestore para a ronda digital (modular)
-const otherDb = getFirestore(app, 'ronda-digital');
+// Firestore para a ronda digital (modular) com persistência
+const otherDb = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
+}, 'ronda-digital');
 
-// Storage (modular - recomendado para novas implementações)
+// Storage (modular)
 const storage = getStorage(app);
 
 export { firebase, db, otherDb, storage };

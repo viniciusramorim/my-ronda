@@ -302,6 +302,7 @@ export default function HomeScreen() {
   const [modoRota, setModoRota] = useState<"livre" | "predefinida" | null>(
     null,
   );
+  const [isOnline, setIsOnline] = useState(true);
   const [showTrocaVeiculoModal, setShowTrocaVeiculoModal] = useState(false);
   const [carregandoRotas, setCarregandoRotas] = useState(false);
   const [siteSelecionadoDaRota, setSiteSelecionadoDaRota] = useState(false);
@@ -1076,7 +1077,18 @@ export default function HomeScreen() {
 
     initialize();
 
+    // Monitorar conexão via Firestore (simplificado)
+    const interval = setInterval(async () => {
+      try {
+        // Tenta um fetch rápido ou usa o status do Firebase
+        setIsOnline(navigator.onLine ?? true);
+      } catch (e) {
+        setIsOnline(false);
+      }
+    }, 10000);
+
     return () => {
+      clearInterval(interval);
       if (subscription) {
         subscription.remove();
       }
@@ -2168,7 +2180,13 @@ export default function HomeScreen() {
 
       return sitesProximos.slice(0, limite);
     } catch (error: any) {
-      console.error("[Audit] Erro crítico em encontrarSitesProximosComGeohash:", error);
+      // Se for erro de rede/offline, logar apenas como informação
+      if (error?.code === "unavailable" || error?.message?.includes("offline")) {
+        console.log("[Audit] Pesquisa de sites offline. Tentando usar cache...");
+        // O Firestore retornará do cache automaticamente se a persistência estiver ativa
+      } else {
+        console.error("[Audit] Erro crítico em encontrarSitesProximosComGeohash:", error);
+      }
       
       // Se o erro for de permissão insuficiente, redirecionar para login para re-autenticar
       if (error?.message?.includes("Missing or insufficient permissions") || 
@@ -2196,7 +2214,14 @@ export default function HomeScreen() {
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
-        <Text style={styles.welcomeText}>Bem-vindo(a), {user}.</Text>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={styles.welcomeText}>Bem-vindo(a), {user}.</Text>
+          {!isOnline && (
+            <View style={{ backgroundColor: '#ff4444', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 }}>
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>OFFLINE</Text>
+            </View>
+          )}
+        </View>
 
         {isTracking ? (
           <TouchableOpacity

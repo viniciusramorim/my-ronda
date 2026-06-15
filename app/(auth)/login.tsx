@@ -18,7 +18,7 @@ export default function LoginScreen() {
   const [versaoInfo, setVersaoInfo] = useState<any>(null);
 
   // Versão atual do app - use Constants ou uma versão hardcoded
-  const currentAppVersion = Constants.expoConfig?.version || "2.1.0.171125";
+  const currentAppVersion = Constants.expoConfig?.version || "2.2.0.171125";
 
   // Verificar versão ao carregar a tela
   useEffect(() => {
@@ -28,15 +28,15 @@ export default function LoginScreen() {
   const verificarVersaoApp = async () => {
     try {
       const versaoDoc = await getDoc(doc(otherDb, 'app_versions', 'android'));
-      
+
       if (versaoDoc.exists()) {
         const versaoData = versaoDoc.data();
         setVersaoInfo(versaoData);
-        
+
         // Verificar se a versão atual é compatível
         if (versaoData.version !== currentAppVersion) {
           setVersaoValida(false);
-          
+
           // Se for obrigatória, mostrar alerta imediatamente
           if (versaoData.mandatory) {
             mostrarAlertaVersao(versaoData);
@@ -66,9 +66,9 @@ export default function LoginScreen() {
 
     // Adiciona botão "Ignorar" apenas se não for obrigatório
     if (!versaoData.mandatory) {
-      botoes.push({ 
-        text: 'Ignorar', 
-        style: 'cancel' as const 
+      botoes.push({
+        text: 'Ignorar',
+        style: 'cancel' as const
       });
     }
 
@@ -138,11 +138,11 @@ export default function LoginScreen() {
         <View style={styles.versaoAlerta}>
           <Ionicons name="warning" size={20} color="#ffcc00" />
           <Text style={styles.versaoAlertaText}>
-            {versaoInfo.mandatory 
-              ? 'Atualização obrigatória disponível' 
+            {versaoInfo.mandatory
+              ? 'Atualização obrigatória disponível'
               : 'Nova versão disponível'}
           </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             onPress={() => mostrarAlertaVersao(versaoInfo)}
             style={styles.versaoBotao}
           >
