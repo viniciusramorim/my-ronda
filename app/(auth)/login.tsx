@@ -25,23 +25,46 @@ export default function LoginScreen() {
     verificarVersaoApp();
   }, []);
 
+
+  const compararVersoes = (versaoAtual: string, versaoBase: string) => {
+    const atual = versaoAtual.split('.').map(Number);
+    const base = versaoBase.split('.').map(Number);
+
+    const maxLength = Math.max(atual.length, base.length);
+
+    for (let i = 0; i < maxLength; i++) {
+      const a = atual[i] || 0;
+      const b = base[i] || 0;
+
+      if (a > b) return 1;
+      if (a < b) return -1;
+    }
+
+    return 0;
+  };
+
   const verificarVersaoApp = async () => {
     try {
       const versaoDoc = await getDoc(doc(otherDb, 'app_versions', 'android'));
 
       if (versaoDoc.exists()) {
-        const versaoData = versaoDoc.data();
+         const versaoData = versaoDoc.data();
         setVersaoInfo(versaoData);
 
         // Verificar se a versão atual é compatível
-        if (versaoData.version !== currentAppVersion) {
+        const resultado = compararVersoes(currentAppVersion, versaoData.version);
+        console.log('Versão App:', currentAppVersion);
+        console.log('Versão Firebase:', versaoData.version);
+        console.log('Resultado:', resultado);
+        // Se versão atual for MENOR → bloqueia
+        if (resultado < 0) {
           setVersaoValida(false);
 
-          // Se for obrigatória, mostrar alerta imediatamente
           if (versaoData.mandatory) {
             mostrarAlertaVersao(versaoData);
           }
         } else {
+          // Igual ou MAIOR → libera
           setVersaoValida(true);
         }
       }
