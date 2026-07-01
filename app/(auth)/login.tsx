@@ -3,9 +3,11 @@ import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useState, useEffect } from 'react';
 import { firebase, otherDb } from '@/services/firebaseConfig';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc,updateDoc } from 'firebase/firestore';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
+import * as Application from 'expo-application';
+import { Platform } from 'react-native';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -19,6 +21,8 @@ export default function LoginScreen() {
 
   // Versão atual do app - use Constants ou uma versão hardcoded
   const currentAppVersion = Constants.expoConfig?.version || "2.2.0.171125";
+  const appVersion = Application.nativeApplicationVersion ?? "desconhecida";
+  const buildVersion = Application.nativeBuildVersion ?? "0";
 
   // Verificar versão ao carregar a tela
   useEffect(() => {
@@ -127,6 +131,14 @@ export default function LoginScreen() {
       if (!docSnap.exists()) throw new Error('Usuário não encontrado no banco');
 
       const user = docSnap.data();
+      const userRef = doc(otherDb, 'usuarios', uid);
+ await updateDoc(userRef, {
+        appVersion: appVersion,
+        buildVersion: buildVersion,
+        platform: Platform.OS,
+        lastLoginAt: new Date().toISOString()
+      });
+
       await AsyncStorage.multiSet([
         ['loggedIn', 'true'],
         ['userEmail', cred.user?.email ?? ''],
