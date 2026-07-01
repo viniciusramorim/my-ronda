@@ -21,7 +21,7 @@ export default function LoginScreen() {
 
   // Versão atual do app - use Constants ou uma versão hardcoded
   const currentAppVersion = Constants.expoConfig?.version || "2.2.0.171125";
-  const appVersion = Application.nativeApplicationVersion ?? "desconhecida";
+  const appVersion = Constants.expoConfig?.version ?? "2.2.0.171125";
   const buildVersion = Application.nativeBuildVersion ?? "0";
 
   // Verificar versão ao carregar a tela
