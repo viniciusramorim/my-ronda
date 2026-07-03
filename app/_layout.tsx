@@ -1,46 +1,38 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router/react-navigation';
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useColorScheme } from '@/hooks/useColorScheme';
 
-SplashScreen.preventAutoHideAsync();
-
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
+  const [loaded, fontError] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
   });
-  const router = useRouter();
   const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (loaded) {
+    if (loaded || fontError) {
       SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [loaded, fontError]);
 
   useEffect(() => {
     const checkLogin = async () => {
-      const logged = await AsyncStorage.getItem('loggedIn');
-      setIsLoggedIn(logged === 'true');
+      try {
+        const logged = await AsyncStorage.getItem('loggedIn');
+        setIsLoggedIn(logged === 'true');
+      } catch {
+        setIsLoggedIn(false);
+      }
     };
     checkLogin();
   }, []);
 
-  useEffect(() => {
-    if (loaded && isLoggedIn !== null) {
-      if (!isLoggedIn) {
-        router.replace('/(auth)/login');
-        AsyncStorage.removeItem('loggedIn');
-      }
-    }
-  }, [loaded, isLoggedIn]);
-
-  if (!loaded || isLoggedIn === null) {
+  if ((!loaded && !fontError) || isLoggedIn === null) {
     return null; // Ou um componente de carregamento
   }
 
